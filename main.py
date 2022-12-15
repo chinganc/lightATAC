@@ -107,7 +107,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--discount', type=float, default=0.99)
     parser.add_argument('--hidden_dim', type=int, default=256)
-    parser.add_argument('--n_hidden', type=int, default=2)
+    parser.add_argument('--n_hidden', type=int, default=3)
     parser.add_argument('--n_steps', type=int, default=10**6)
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--fast_lr', type=float, default=5e-4)
