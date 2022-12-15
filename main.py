@@ -33,12 +33,18 @@ def eval_agent(*, env, agent, discount, n_eval_episodes, max_episode_steps=1000,
         info_dict["normalized return std"] =  normalized_returns.std()
     return info_dict
 
+def get_dataset(env):
+    while True:
+        try:
+            return env.get_dataset()
+        except (HTTPError, OSError):
+            print('Unable to download dataset. Retry.')
 
 def main(args):
     # ------------------ Initialization ------------------ #
     torch.set_num_threads(1)
     env = gym.make(args.env_name)  # d4rl ENV
-    dataset = env.get_dataset()
+    dataset = get_dataset(env)
     set_seed(args.seed, env=env)
 
     # Setup logger
