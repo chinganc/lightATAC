@@ -80,6 +80,7 @@ def main(args):
     # Train policy and value to fit the behavior data
     bp = BehaviorPretraining(networks, optimizers, lambd=0.99, discount=args.discount)
     traj_data = bp.train(tuple_to_traj_data(dataset), args.n_warmstart_steps, log_fun= lambda x: print(x))
+    dataset = traj_data_to_qlearning_data(traj_data)
 
     # Main Training
     for step in trange(args.n_steps):
