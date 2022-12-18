@@ -35,14 +35,14 @@ class BehaviorPretraining(nn.Module):
         vs, next_vs, last_vs = compute_batched(self.networks['vf'], [observations, next_observations, last_observations])
         return policy_dists, qs, vs, next_vs, last_vs
 
-    def train(self, traj_data, n_steps, batch_size=256, log_freq=1000, log_fun=None):
+    def train(self, traj_data, n_steps, batch_size=256, log_freq=1000, log_fun=None, silence=False):
         """ A basic trainer loop. Users cand customize this method if needed.
 
             traj_data: a list of trajectory dicts
         """
         self.preprocess_traj_data(traj_data, self.discount)
         data = traj_to_tuple_data(traj_data)
-        for step in trange(n_steps):
+        for step in trange(n_steps, disable=silence):
             train_metrics = self.update(**sample_batch(data, batch_size))
             if (step+1) % max(log_freq,1) == 0 and log_fun is not None:
                 log_fun(train_metrics)
@@ -91,14 +91,25 @@ class BehaviorPretraining(nn.Module):
     def preprocess_traj_data(cls, traj_data, discount):
         for traj in traj_data:
             H = len(traj['rewards'])
-            traj['returns'] = discount_cumsum(traj['rewards'], discount)
-            assert traj['returns'].shape == traj['rewards'].shape
-            traj['remaining_steps'] = np.flip(np.arange(H))+1
-            assert traj['remaining_steps'].shape == traj['rewards'].shape
-            traj['last_observations'] = np.repeat(traj['observations'][-1:], H, axis=0)
-            assert traj['last_observations'].shape ==traj['observations'].shape
-            traj['last_terminals'] = np.repeat(traj['terminals'][-1], H)
-            assert traj['last_terminals'].shape == traj['terminals'].shape
+            if torch.is_tensor(traj['rewards']):
+                with torch.no_grad():
+                    traj['returns'] = discount_cumsum(traj['rewards'], discount)
+                    assert traj['returns'].shape == traj['rewards'].shape
+                    traj['remaining_steps'] = torch.flip(torch.arange(H, device=traj['rewards'].device), dims=(0,))+1
+                    assert traj['remaining_steps'].shape == traj['rewards'].shape
+                    traj['last_observations'] = torch.repeat_interleave(traj['observations'][-1:], H, dim=0)
+                    assert traj['last_observations'].shape ==traj['observations'].shape
+                    traj['last_terminals'] = torch.repeat_interleave(traj['terminals'][-1], H)
+                    assert traj['last_terminals'].shape == traj['terminals'].shape
+            else:
+                traj['returns'] = discount_cumsum(traj['rewards'], discount)
+                assert traj['returns'].shape == traj['rewards'].shape
+                traj['remaining_steps'] = np.flip(np.arange(H))+1
+                assert traj['remaining_steps'].shape == traj['rewards'].shape
+                traj['last_observations'] = np.repeat(traj['observations'][-1:], H, axis=0)
+                assert traj['last_observations'].shape ==traj['observations'].shape
+                traj['last_terminals'] = np.repeat(traj['terminals'][-1], H)
+                assert traj['last_terminals'].shape == traj['terminals'].shape
 
 
 
