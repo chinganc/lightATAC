@@ -70,6 +70,15 @@ def traj_data_to_qlearning_data(traj_data, ignores=("metadata",)):
 
     return traj_to_tuple_data(traj_data, ignores=ignores)
 
+def cat_data_dicts(*data_dicts):
+    new_data = dict()
+    for k in data_dicts[0]:
+        if torch.is_tensor(data_dicts[0][k]):
+            new_data[k] = torch.cat([d[k] for d in data_dicts])
+        else:
+            new_data[k] = np.concatenate([d[k] for d in data_dicts])
+    return new_data
+
 
 def discount_cumsum(x, discount):
     """Discounted cumulative sum.
@@ -89,6 +98,7 @@ def discount_cumsum(x, discount):
                 b_coeffs=torch.tensor([1, 0], device=x.device), clamp=False).flip(dims=(0,))
     else:
         return signal.lfilter([1], [1, float(-discount)], x[::-1], axis=-1)[::-1]
+
 
 
 # Below are modified from gwthomas/IQL-PyTorch
