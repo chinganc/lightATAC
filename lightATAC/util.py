@@ -46,12 +46,8 @@ def tuple_to_traj_data(tuple_data, ignores=("metadata",)):
     return traj_data
 
 
-def traj_data_to_qlearning_data(traj_data, ignores=("metadata",)):
-    """Convert a list of trajectory dicts of np.arrays or torch.tensors into d4rl qlearning data format.
-       This would add a new field "next_observations".
-    """
-    traj_data = copy.deepcopy(traj_data)
-    for traj in traj_data:
+def add_next_observations(traj):
+    if "next_observations" not in traj:
         # process 'observations'
         if traj["terminals"][-1] > 0:  # duplicate the last element
             if torch.is_tensor(traj["observations"]):
@@ -65,9 +61,17 @@ def traj_data_to_qlearning_data(traj_data, ignores=("metadata",)):
         # At this point, traj['observations'] should have one more element than the others.
         traj["next_observations"] = traj["observations"][1:]
         traj["observations"] = traj["observations"][:-1]
-        lens = [len(v) for k, v in traj.items()]
-        assert all([lens[0] == l for l in lens[1:]])
+    lens = [len(v) for k, v in traj.items()]
+    assert all([lens[0] == l for l in lens[1:]])
 
+
+def traj_data_to_qlearning_data(traj_data, ignores=("metadata",)):
+    """Convert a list of trajectory dicts of np.arrays or torch.tensors into d4rl qlearning data format.
+       This would add a new field "next_observations".
+    """
+    traj_data = copy.deepcopy(traj_data)
+    for traj in traj_data:
+        add_next_observations(traj)
     return traj_to_tuple_data(traj_data, ignores=ignores)
 
 def cat_data_dicts(*data_dicts):

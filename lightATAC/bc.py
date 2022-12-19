@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 
-from lightATAC.util import compute_batched, discount_cumsum, sample_batch, traj_to_tuple_data
+from lightATAC.util import compute_batched, discount_cumsum, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data
 
 
 def asymmetric_l2_loss(u, tau):
@@ -35,18 +35,19 @@ class BehaviorPretraining(nn.Module):
         vs, next_vs, last_vs = compute_batched(self.networks['vf'], [observations, next_observations, last_observations])
         return policy_dists, qs, vs, next_vs, last_vs
 
-    def train(self, traj_data, n_steps, batch_size=256, log_freq=1000, log_fun=None, silence=False):
+    def train(self, dataset, n_steps, batch_size=256, log_freq=1000, log_fun=None, silence=False):
         """ A basic trainer loop. Users cand customize this method if needed.
 
-            traj_data: a list of trajectory dicts
+            dataset: a dict of observations, actions, rewards, terminals
         """
+        traj_data = tuple_to_traj_data(dataset)
         self.preprocess_traj_data(traj_data, self.discount)
-        data = traj_to_tuple_data(traj_data)
+        data = traj_data_to_qlearning_data(traj_data)  # add next observations
         for step in trange(n_steps, disable=silence):
             train_metrics = self.update(**sample_batch(data, batch_size))
             if (step+1) % max(log_freq,1) == 0 and log_fun is not None:
                 log_fun(train_metrics)
-        return traj_data
+        return data
 
     def update(self, observations, actions, next_observations, rewards, terminals,
                      returns, remaining_steps, last_observations, last_terminals, **kwargs):

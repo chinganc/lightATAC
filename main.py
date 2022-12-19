@@ -9,7 +9,7 @@ from lightATAC.value_functions import TwinQ, ValueFunction
 from lightATAC.util import Log, set_seed
 from lightATAC.bc import BehaviorPretraining
 from lightATAC.atac import ATAC
-from lightATAC.util import (evaluate_policy, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data, DEFAULT_DEVICE)
+from lightATAC.util import evaluate_policy, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data, DEFAULT_DEVICE
 
 EPS=1e-6
 
@@ -79,8 +79,7 @@ def main(args):
 
     # Train policy and value to fit the behavior data
     bp = BehaviorPretraining(networks, optimizers, lambd=0.99, discount=args.discount)
-    traj_data = bp.train(tuple_to_traj_data(dataset), args.n_warmstart_steps, log_fun= lambda x: print(x))
-    dataset = traj_data_to_qlearning_data(traj_data)
+    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun= lambda x: print(x))  # This ensures "next_observations" is in `dataset`.
 
     # Main Training
     for step in trange(args.n_steps):
