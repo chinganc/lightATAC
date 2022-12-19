@@ -31,12 +31,12 @@ def tuple_to_traj_data(tuple_data, ignores=("metadata",)):
     ends = (tuple_data["terminals"] + tuple_data["timeouts"]) > 0
     ends[-1] = False  # don't need to split at the end
 
-    inds = np.arange(len(ends))[ends] + 1
+    inds = torch.arange(len(ends))[ends] + 1
     tmp_data = dict()
     for k, v in tuple_data.items():
         if not any([ig in k for ig in ignores]):
             if torch.is_tensor(v):
-                secs = np.diff(np.insert(inds, (0,len(inds)),  (0,len(inds)))).tolist()
+                secs = np.diff(np.insert(inds, (0,len(inds)),  (0,len(v)))).tolist()
                 tmp_data[k] = v.split(secs)
             else:
                 tmp_data[k] = np.split(v, inds)
