@@ -93,10 +93,6 @@ class ATAC(nn.Module):
         self._init_observations = torch.Tensor(init_observations) if init_observations is not None else init_observations  # if provided, it runs ATAC0
         self._buffer_batch_size = buffer_batch_size
 
-        # heuristic
-        self._heuristic_method = heuristic_method
-        self._heuristic_temperature = heuristic_temperature
-
     def update(self, observations, actions, next_observations, rewards, terminals, **kwargs):
 
         rewards = rewards.flatten()
