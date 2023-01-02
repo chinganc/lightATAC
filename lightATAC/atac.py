@@ -44,9 +44,6 @@ class ATAC(nn.Module):
                  buffer_batch_size=256,  # for ATAC0 (sampling batch_size of init_observations)
                  # Misc
                  debug=True,
-                 # Heuristic
-                 heuristic_method='None',
-                 heuristic_temperature=0.01,
                  ):
 
         #############################################################################################
