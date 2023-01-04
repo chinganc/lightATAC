@@ -131,9 +131,9 @@ class ATAC(nn.Module):
             # Compute Bellman error
             assert qfp.shape == qfpn.shape == qfna.shape == q_target.shape
             target_error = F.mse_loss(qfp, q_target)
-            q_target_pred = compute_bellman_backup(qfpn)
-            td_error = F.mse_loss(qfp, q_target_pred)
-            qf_bellman_loss = w1*target_error+ w2*td_error
+            q_backup = compute_bellman_backup(qfpn)  # compared with `q_target``, the gradient of `self._qf` is traced in `q_backup`.
+            residual_error = F.mse_loss(qfp, q_backup)
+            qf_bellman_loss = w1*target_error+ w2*residual_error
             # Compute pessimism term
             if self._init_observations is None:  # ATAC
                 pess_loss = (qfna - qfp).mean()
@@ -180,14 +180,13 @@ class ATAC(nn.Module):
                         alpha_loss=alpha_loss.item(),
                         policy_entropy=policy_entropy.item(),
                         alpha=alpha.item(),
-                        lower_bound=lower_bound.item(),
-        )
+                        lower_bound=lower_bound.item())
 
         # For logging
         if self._debug:
             with torch.no_grad():
                 debug_log_info = dict(
-                        bellman_surrogate=td_error.item(),
+                        bellman_surrogate=residual_error.item(),
                         qf1_pred_mean=qf_pred_both[0].mean().item(),
                         qf2_pred_mean = qf_pred_both[1].mean().item(),
                         q_target_mean = q_target.mean().item(),

@@ -55,7 +55,6 @@ def main(args):
 
     # Assume vector observation and action
     obs_dim, act_dim = dataset['observations'].shape[1], dataset['actions'].shape[1]
-    vf = ValueFunction(obs_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
     qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
     policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden, use_tanh=True).to(DEFAULT_DEVICE)
     dataset['actions'] = np.clip(dataset['actions'], -1+EPS, 1-EPS)  # due to tanh
@@ -72,23 +71,22 @@ def main(args):
         beta=args.beta, # the regularization coefficient in front of the Bellman error
     )
     rl.to(DEFAULT_DEVICE)
-    networks = dict(qf=qf, vf=vf, policy=policy)
-    optimizers = [torch.optim.Adam(list(vf.parameters())+list(policy.parameters())+list(qf.parameters()), lr=args.fast_lr)]
 
     # ------------------ Pretraining ------------------ #
 
     # Train policy and value to fit the behavior data
-    bp = BehaviorPretraining(networks, optimizers, lambd=0.99, discount=args.discount)
-    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun= lambda x: print(x))  # This ensures "next_observations" is in `dataset`.
+    bp = BehaviorPretraining(qf=qf, policy=policy, lr=args.fast_lr, discount=args.discount, td_weight=0.5, rs_weight=0.5)
+    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun= lambda x, i: print(i, x))  # This ensures "next_observations" is in `dataset`.
+    rl._target_qf = bp.target_qf
 
     # Main Training
     for step in trange(args.n_steps):
         train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
-        if (step+1) % max(int(args.eval_period/10),1) == 0:
+        if step % max(int(args.eval_period/10),1) == 0  or  step==args.n_steps-1:
             print(train_metrics)
             for k, v in train_metrics.items():
                 writer.add_scalar('Train/'+k, v, step)
-        if (step+1) % args.eval_period == 0:
+        if step % args.eval_period == 0:
             eval_metrics = eval_agent(env=env,
                                       agent=policy,
                                       discount=args.discount,
