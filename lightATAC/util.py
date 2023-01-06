@@ -83,6 +83,11 @@ def cat_data_dicts(*data_dicts):
             new_data[k] = np.concatenate([d[k] for d in data_dicts])
     return new_data
 
+def normalized_sum(loss, reg, w):
+    return loss/w + reg if w>1 else loss + w*reg
+
+def asymmetric_l2_loss(u, tau):
+    return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
 
 def discount_cumsum(x, discount):
     """Discounted cumulative sum.

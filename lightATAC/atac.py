@@ -4,11 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average
+from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum
 
-
-def normalized_sum(loss, reg, w):
-    return loss/w + reg if w>1 else loss + w*reg
 
 def l2_projection(constraint):
     @torch.no_grad()
@@ -28,14 +25,15 @@ class ATAC(nn.Module):
                  discount=0.99,
                  Vmin=-float('inf'), # min value of Q (used in target backup)
                  Vmax=float('inf'), # max value of Q (used in target backup)
-                 action_shape,  # shape of the action space
                  # Optimization parameters
                  policy_lr=5e-7,
                  qf_lr=5e-4,
                  target_update_tau=5e-3,
+                 # Entropy control
+                 action_shape=None,  # shape of the action space
                  fixed_alpha=None,
                  target_entropy=None,
-                 initial_log_entropy=0.,
+                 initial_log_alpha=0.,
                  # ATAC parameters
                  beta=1.0,  # the regularization coefficient in front of the Bellman error
                  norm_constraint=100,  # l2 norm constraint on the NN weight
@@ -81,10 +79,10 @@ class ATAC(nn.Module):
         self._fixed_alpha = fixed_alpha
         if self._use_automatic_entropy_tuning:
             self._target_entropy = target_entropy if target_entropy else -np.prod(action_shape).item()
-            self._log_alpha = torch.nn.Parameter(torch.Tensor([initial_log_entropy])) # torch.Tensor([self._initial_log_entropy]).requires_grad_()
+            self._log_alpha = torch.nn.Parameter(torch.tensor(initial_log_alpha))
             self._alpha_optimizer = optimizer([self._log_alpha], lr=self._alpha_lr)
         else:
-            self._log_alpha = torch.Tensor([self._fixed_alpha]).log()
+            self._log_alpha = torch.tensor(self._fixed_alpha).log()
 
         # initial state pessimism (ATAC0)
         self._init_observations = torch.Tensor(init_observations) if init_observations is not None else init_observations  # if provided, it runs ATAC0

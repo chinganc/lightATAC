@@ -56,7 +56,8 @@ def main(args):
     # Assume vector observation and action
     obs_dim, act_dim = dataset['observations'].shape[1], dataset['actions'].shape[1]
     qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
-    policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden, use_tanh=True).to(DEFAULT_DEVICE)
+    policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden,
+                            use_tanh=True, std_type='diagonal').to(DEFAULT_DEVICE)
     dataset['actions'] = np.clip(dataset['actions'], -1+EPS, 1-EPS)  # due to tanh
     rl = ATAC(
         policy=policy,
@@ -73,9 +74,11 @@ def main(args):
     rl.to(DEFAULT_DEVICE)
 
     # ------------------ Pretraining ------------------ #
-
     # Train policy and value to fit the behavior data
-    bp = BehaviorPretraining(qf=qf, policy=policy, lr=args.fast_lr, discount=args.discount, td_weight=0.5, rs_weight=0.5)
+    bp = BehaviorPretraining(qf=qf, policy=policy, lr=args.fast_lr, discount=args.discount,
+                             td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim)
+    bp.to(DEFAULT_DEVICE)
+
     dataset = bp.train(dataset, args.n_warmstart_steps, log_fun= lambda x, i: print(i, x))  # This ensures "next_observations" is in `dataset`.
     rl._target_qf = bp.target_qf
 

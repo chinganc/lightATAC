@@ -5,19 +5,18 @@ import torch.nn as nn
 from tqdm import trange
 from copy import deepcopy
 from lightATAC.util import compute_batched, discount_cumsum, sample_batch, \
-        traj_data_to_qlearning_data, tuple_to_traj_data, update_exponential_moving_average
-
-
-def asymmetric_l2_loss(u, tau):
-    return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
+        traj_data_to_qlearning_data, tuple_to_traj_data, update_exponential_moving_average, normalized_sum, asymmetric_l2_loss
 
 class BehaviorPretraining(nn.Module):
     """
-        A generic pretraining algorithm for learning the behavior policy and its values.
+        A generic pretraining algorithm for learning the behavior policy and its
+        Q, value functions.
 
-        It trains the policy by behavior cloning (MLE or L2 error), and the
-        values (v and q) by TD-lambda and expectile regression (by default, it
-        uses least squares.)
+        It trains the policy by behavior cloning (MLE or L2 error), the Q
+        function can be trained by TD error (with a target network) and/or
+        residual error (using a double Q function), and the value function is
+        trained by TD-lambda and expectile regression (by default, it uses least
+        squares.)
 
     """
 
@@ -26,12 +25,41 @@ class BehaviorPretraining(nn.Module):
                  qf=None,  # nn.module
                  vf=None,  # nn.module
                  discount=0.99,  # discount factor
-                 lambd=1.0,  # lambda for TD lambda
+                 lr=5e-4,  # learning rate
+                 # Q learning
+                 target_update_rate=5e-3,
                  td_weight=1.0,  # weight on the td error (surrogate based on target network)
                  rs_weight=0.0,  # weight on the residual error
-                 lr=5e-4,  # learning rate
-                 target_update_rate=5e-3,
-                 expectile=0.5):
+                 # V learning
+                 lambd=1.0,  # lambda for TD lambda
+                 expectile=0.5,
+                 # policy entropy
+                 action_shape=None,
+                 fixed_alpha=0,
+                 target_entropy=None,
+                 initial_log_alpha=0.,
+                 ):
+        """
+            Inputs:
+                policy: An nn.module of policy network that returns a distribution or a tensor.
+                qf: An nn.module of double Q networks that implement additionally `both` method.
+                vf: An nn.module of value network.
+
+                Any provided networks above would be trained; to train `qf`, `policy` is required.
+
+                discount: discount factor
+                lr: learning rate
+                target_update_rate: learning rate to update target network
+                td_weight: weight on the TD loss for learning `qf`
+                rs_weight: weight on the residual loss for learning `qf`
+                lambd: lambda in TD-lambda for learning `vf`.
+                expectile: expectile used for learning `vf`.
+
+                action_shape: shape of the vector action space
+                fixed_alpha: weight on the entropy term
+                target_entropy: entropy lower bound; if None, it would be inferred from `action_shape`
+                initial_log_alpha: initial log entropy
+        """
 
         super().__init__()
         self.policy = policy
@@ -50,6 +78,17 @@ class BehaviorPretraining(nn.Module):
 
         parameters = sum([ list(x.parameters()) for x in (policy, qf, vf) if x is not None], start=[])
         self.optimizer = torch.optim.Adam(parameters, lr=lr)
+
+        # Control of policy entropy
+        self._use_automatic_entropy_tuning = fixed_alpha is None
+        self._fixed_alpha = fixed_alpha
+        if self._use_automatic_entropy_tuning:
+            assert action_shape is not None
+            self._target_entropy = target_entropy if target_entropy else -np.prod(action_shape).item()
+            self._log_alpha = torch.nn.Parameter(torch.tensor(initial_log_alpha))
+            self._alpha_optimizer = torch.optim.Adam([self._log_alpha], lr=lr)
+        else:
+            self._log_alpha = torch.tensor(self._fixed_alpha).log()
 
     def train(self, dataset, n_steps, batch_size=256, log_freq=1000, log_fun=None, silence=False):
         """ A basic trainer loop. Users cand customize this method if needed.
@@ -126,13 +165,25 @@ class BehaviorPretraining(nn.Module):
         # Policy loss
         policy_outs = self.policy(observations)
         if isinstance(policy_outs, torch.distributions.Distribution):  # MLE
-            bc_losses = -policy_outs.log_prob(actions)
+            policy_loss = -policy_outs.log_prob(actions).mean()
+            if self._log_alpha > -float("Inf"):
+                new_actions_dist = self.policy(observations)
+                new_actions = new_actions_dist.rsample()
+                log_pi_new_actions = new_actions_dist.log_prob(new_actions)
+                policy_entropy = -log_pi_new_actions.mean()
+                if self._use_automatic_entropy_tuning:
+                    alpha_loss = self._log_alpha * (policy_entropy.detach() - self._target_entropy)  # entropy - target
+                    self._alpha_optimizer.zero_grad()
+                    alpha_loss.backward()
+                    self._alpha_optimizer.step()
+                alpha = self._log_alpha.exp().detach()
+                policy_loss = normalized_sum(policy_loss, -policy_entropy, alpha)
+
         elif torch.is_tensor(policy_outs):  # l2 loss
             assert policy_outs.shape == actions.shape
-            bc_losses = torch.sum((policy_outs - actions)**2, dim=1)
+            policy_loss = torch.sum((policy_outs - actions)**2, dim=1).mean()
         else:
             raise NotImplementedError
-        policy_loss = torch.mean(bc_losses)
         info_dict = {"Policy loss": policy_loss.item()}
         return policy_loss, info_dict
 
