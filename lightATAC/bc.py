@@ -76,7 +76,11 @@ class BehaviorPretraining(nn.Module):
             assert self.policy is not None, 'Learning a q network requires a policy network.'
             self.target_qf = deepcopy(self.qf).requires_grad_(False)
 
-        parameters = sum([ list(x.parameters()) for x in (policy, qf, vf) if x is not None], start=[])
+        parameters = []
+        for x in (policy, qf, vf):
+            if x is not None:
+                parameters+= list(x.parameters())
+
         self.optimizer = torch.optim.Adam(parameters, lr=lr)
 
         # Control of policy entropy
