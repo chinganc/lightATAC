@@ -100,7 +100,7 @@ class ATAC(nn.Module):
 
         # Pre-computation
         with torch.no_grad():  # regression target
-            new_next_actions = self.policy(next_observations).rsample()
+            new_next_actions = self.policy(next_observations).sample()
             target_q_values = torch.clip(self._target_qf(next_observations, new_next_actions), min=self._Vmin, max=self._Vmax)  # projection
             q_target = compute_bellman_backup(target_q_values.flatten())
 

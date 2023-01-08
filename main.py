@@ -7,7 +7,7 @@ from tqdm import trange
 from lightATAC.policy import GaussianPolicy
 from lightATAC.value_functions import TwinQ, ValueFunction
 from lightATAC.util import Log, set_seed
-from lightATAC.bc import BehaviorPretraining
+from lightATAC.bp import BehaviorPretraining
 from lightATAC.atac import ATAC
 from lightATAC.util import evaluate_policy, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data, DEFAULT_DEVICE
 
