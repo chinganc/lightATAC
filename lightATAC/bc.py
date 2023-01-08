@@ -26,6 +26,7 @@ class BehaviorPretraining(nn.Module):
                  vf=None,  # nn.module
                  discount=0.99,  # discount factor
                  lr=5e-4,  # learning rate
+                 use_cache=False,
                  # Q learning
                  target_update_rate=5e-3,
                  td_weight=1.0,  # weight on the td error (surrogate based on target network)
@@ -49,6 +50,7 @@ class BehaviorPretraining(nn.Module):
 
                 discount: discount factor
                 lr: learning rate
+                use_cache: whether to batch compute the policy and cache the result
                 target_update_rate: learning rate to update target network
                 td_weight: weight on the TD loss for learning `qf`
                 rs_weight: weight on the residual loss for learning `qf`
@@ -82,6 +84,10 @@ class BehaviorPretraining(nn.Module):
                 parameters+= list(x.parameters())
 
         self.optimizer = torch.optim.Adam(parameters, lr=lr)
+
+        # Cache
+        self.use_cache = use_cache
+        self._next_policy_outs = None
 
         # Control of policy entropy
         self._use_automatic_entropy_tuning = fixed_alpha is None
@@ -118,14 +124,19 @@ class BehaviorPretraining(nn.Module):
         qf_loss = 0.
         # Update target
         update_exponential_moving_average(self.target_qf, self.qf, self.target_update_rate)
+
         # Compute shared parts
-        qs_all = self.qf.both(observations, actions)  # tuple, inference
-        with torch.no_grad():
-            next_policy_outs = self.policy(next_observations)   # inference
-            if isinstance(next_policy_outs, torch.distributions.Distribution):
-                next_policy_actions = next_policy_outs.sample()
-            else:
-                next_policy_actions = next_policy_outs
+        # We assured self.policy is not None, so self._next_policy_outs has been precomputed.
+        next_policy_outs = self._next_policy_outs if self.use_cache else self.policy(next_observations)
+        next_policy_actions = next_policy_outs.sample() if isinstance(next_policy_outs, torch.distributions.Distribution) else next_policy_outs
+        next_policy_actions = next_policy_actions.detach()
+
+        if self.rs_weight>0:
+            qs_all, next_qs_all = compute_batched(self.qf.both, [observations,  next_observations],
+                                                                [actions,       next_policy_actions])
+        else:
+            qs_all = self.qf.both(observations, actions)  # tuple, inference
+
         # Temporal difference error
         if self.td_weight>0:
             next_targets = self.target_qf(next_observations, next_policy_actions)  # inference
@@ -134,7 +145,7 @@ class BehaviorPretraining(nn.Module):
                 qf_loss += asymmetric_l2_loss(td_targets - qs, self.expectile) * self.td_weight
         # Residual error
         if self.rs_weight>0:
-            next_qs_all = self.qf.both(next_observations, next_policy_actions)  # inference
+            # next_qs_all = self.qf.both(next_observations, next_policy_actions)  # inference
             for qs, next_qs in zip(qs_all, next_qs_all):
                 rs_targets = compute_bellman_backup(next_qs)
                 qf_loss += asymmetric_l2_loss(rs_targets - qs, self.expectile) * self.rs_weight
@@ -165,13 +176,18 @@ class BehaviorPretraining(nn.Module):
                      "Average V value": vs.mean().item()}
         return vf_loss, info_dict
 
-    def compute_policy_loss(self, observations, actions, **kwargs):
+    def compute_policy_loss(self, observations, actions, next_observations, rewards, terminals, **kwargs):
         # Policy loss
-        policy_outs = self.policy(observations)
+
+        if self.qf is not None and self.use_cache:
+            policy_outs, self._next_policy_outs = compute_batched(self.policy, [observations, next_observations])
+        else:
+            policy_outs = self.policy(observations)
+
         if isinstance(policy_outs, torch.distributions.Distribution):  # MLE
             policy_loss = -policy_outs.log_prob(actions).mean()
             if self._log_alpha > -float("Inf"):
-                new_actions_dist = self.policy(observations)
+                new_actions_dist = policy_outs
                 new_actions = new_actions_dist.rsample()
                 log_pi_new_actions = new_actions_dist.log_prob(new_actions)
                 policy_entropy = -log_pi_new_actions.mean()
@@ -195,12 +211,12 @@ class BehaviorPretraining(nn.Module):
         qf_loss = vf_loss = policy_loss = torch.tensor(0., device=batch['observations'].device)
         qf_info_dict = vf_info_dict = policy_info_dict = {}
         # Compute loss
+        if self.policy is not None:
+            policy_loss, policy_info_dict = self.compute_policy_loss(**batch)
         if self.qf is not None:
             qf_loss, qf_info_dict = self.compute_qf_loss(**batch)
         if self.vf is not None:
             vf_loss, vf_info_dict = self.compute_vf_loss(**batch)
-        if self.policy is not None:
-            policy_loss, policy_info_dict = self.compute_policy_loss(**batch)
         # Update
         loss = policy_loss + qf_loss + vf_loss
         self.optimizer.zero_grad()
