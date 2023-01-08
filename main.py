@@ -76,7 +76,11 @@ def main(args):
     # Train policy and value to fit the behavior data
     bp = BehaviorPretraining(qf=qf, policy=policy, lr=args.fast_lr, discount=args.discount,
                              td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim).to(DEFAULT_DEVICE)
-    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun= lambda x, i: print(i, x))  # This ensures "next_observations" is in `dataset`.
+    def bp_log_fun(metrics, step):
+        print(step, metrics)
+        for k, v in metrics.items():
+            writer.add_scalar('BehaviorPretraining/'+k, v, step)
+    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun)  # This ensures "next_observations" is in `dataset`.
     rl._target_qf = bp.target_qf
 
     # Main Training
