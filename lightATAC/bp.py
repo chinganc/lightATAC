@@ -78,6 +78,9 @@ class BehaviorPretraining(nn.Module):
             assert self.policy is not None, 'Learning a q network requires a policy network.'
             self.target_qf = deepcopy(self.qf).requires_grad_(False)
 
+        if self.vf is not None:
+            self.target_vf = deepcopy(self.vf).requires_grad_(False)
+
         parameters = []
         for x in (policy, qf, vf):
             if x is not None:
@@ -160,12 +163,13 @@ class BehaviorPretraining(nn.Module):
 
         # Monte-Carlo Q estimate
         mc_estimates = torch.zeros_like(rewards)
+        update_exponential_moving_average(self.target_vf, self.vf, self.target_update_rate)
         if self.lambd>0:
-            last_vs = self.vf(last_observations)  # inference
+            last_vs = self.target_vf(last_observations)  # inference
             mc_estimates = returns + (1-last_terminals.float()) * self.discount**remaining_steps * last_vs
         if self.lambd<1:
             with torch.no_grad():
-                v_next = self.vf(next_observations)  # inference
+                v_next = self.target_vf(next_observations)  # inference
                 td_targets = rewards + (1.-terminals.float())*self.discount*v_next
         vs = self.vf(observations)  # inference
         # TD error
