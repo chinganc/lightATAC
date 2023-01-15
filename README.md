@@ -8,5 +8,8 @@ To install, simply clone the repo and run `pip install -e . `.  Then you can sta
 
 More instructions can be found in `main.py`, and please see the [original paper](https://arxiv.org/abs/2202.02446) for hyperparameters (e.g., `beta`). The code was tested with python 3.9.
 
+The experimental results of lightATAC (over different $\beta$ values) on D4RL mujoco datasets can be viewed at https://tensorboard.dev/experiment/6RwXhalaQeWNmQNHDGvaFA.
+
+
 
 This reimplementation is based on [gwthomas/IQL-PyTorch](https://github.com/gwthomas/IQL-PyTorch). It is minimalistic, so users can easily modify it for their needs. It follows mostly the logic in the original [ATAC](https://github.com/microsoft/ATAC) code, but with some code optimization leading to 1.5X-2X speed up.
