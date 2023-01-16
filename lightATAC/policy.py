@@ -9,6 +9,7 @@ from .util import mlp
 LOG_STD_MIN = -5.0
 LOG_STD_MAX = 2.0
 
+# Below are modified from gwthomas/IQL-PyTorch
 
 class GaussianPolicy(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2,
@@ -27,18 +28,18 @@ class GaussianPolicy(nn.Module):
         else:
             raise ValueError
         self.use_tanh = use_tanh
-        self.min_std = min_std
-        self.max_std = max_std
+        self.min_log_std = np.log(min_std)
+        self.max_log_std = np.log(max_std)
 
     def forward(self, obs, ignore_tanh=None):
         if self.std_type=='diagonal':
             out = self.net(obs)
             mean, log_std = out.split(out.shape[-1]//2, dim=-1)
-            std = torch.exp(log_std).clamp(self.min_std, self.max_std)
+            std = torch.exp(log_std.clamp(self.min_log_std, self.max_log_std))
             dist = Normal(mean, std)
         elif self.std_type=='constant':
             mean = self.net(obs)
-            std = torch.exp(self.log_std).clamp(self.min_std, self.max_std)
+            std = torch.exp(self.log_std.clamp(self.min_log_std, self.max_log_std))
             scale_tril = torch.diag(std)
             dist = MultivariateNormal(mean, scale_tril=scale_tril)
         else:
