@@ -23,7 +23,9 @@ class BehaviorPretraining(nn.Module):
     def __init__(self, *,
                  policy=None,  # nn.module
                  qf=None,  # nn.module
+                 target_qf=None, # nn.module
                  vf=None,  # nn.module
+                 target_vf=None, # nn.module
                  discount=0.99,  # discount factor
                  lr=5e-4,  # learning rate
                  use_cache=False,
@@ -76,10 +78,10 @@ class BehaviorPretraining(nn.Module):
 
         if self.qf is not None:
             assert self.policy is not None, 'Learning a q network requires a policy network.'
-            self.target_qf = deepcopy(self.qf).requires_grad_(False)
+            self.target_qf = deepcopy(self.qf).requires_grad_(False) if target_qf is None else target_qf
 
         if self.vf is not None:
-            self.target_vf = deepcopy(self.vf).requires_grad_(False)
+            self.target_vf = deepcopy(self.vf).requires_grad_(False) if target_vf is None else target_vf
 
         parameters = []
         for x in (policy, qf, vf):
