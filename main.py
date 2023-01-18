@@ -56,6 +56,7 @@ def main(args):
     # Assume vector observation and action
     obs_dim, act_dim = dataset['observations'].shape[1], dataset['actions'].shape[1]
     qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+    target_qf = copy.deepcopy(qf).requires_grad_(False)
     policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden,
                             use_tanh=True, std_type='diagonal').to(DEFAULT_DEVICE)
     dataset['actions'] = np.clip(dataset['actions'], -1+EPS, 1-EPS)  # due to tanh
@@ -74,7 +75,7 @@ def main(args):
 
     # ------------------ Pretraining ------------------ #
     # Train policy and value to fit the behavior data
-    bp = BehaviorPretraining(qf=qf, target_qf=rl._target_qf, policy=policy, lr=args.fast_lr, discount=args.discount,
+    bp = BehaviorPretraining(qf=qf, target_qf=target_qf, policy=policy, lr=args.fast_lr, discount=args.discount,
                              td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim).to(DEFAULT_DEVICE)
     def bp_log_fun(metrics, step):
         print(step, metrics)

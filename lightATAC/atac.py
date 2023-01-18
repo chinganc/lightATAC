@@ -21,6 +21,7 @@ class ATAC(nn.Module):
     def __init__(self, *,
                  policy,
                  qf,
+                 target_qf=None,
                  optimizer,
                  discount=0.99,
                  Vmin=-float('inf'), # min value of Q (used in target backup)
@@ -62,7 +63,7 @@ class ATAC(nn.Module):
         # networks
         self.policy = policy
         self._qf = qf
-        self._target_qf = copy.deepcopy(self._qf).requires_grad_(False)
+        self._target_qf = copy.deepcopy(self._qf).requires_grad_(False) if target_qf is None else target_qf
 
         # optimization
         self._policy_lr = policy_lr
