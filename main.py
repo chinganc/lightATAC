@@ -1,7 +1,7 @@
 from pathlib import Path
 import gym, d4rl
 import numpy as np
-import torch
+import torch, copy
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import trange
 from lightATAC.policy import GaussianPolicy
