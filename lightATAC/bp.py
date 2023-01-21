@@ -29,6 +29,8 @@ class BehaviorPretraining(nn.Module):
                  discount=0.99,  # discount factor
                  lr=5e-4,  # learning rate
                  use_cache=False,
+                 Vmin=-float('inf'),
+                 Vmax=float('inf'),
                  # Q learning
                  target_update_rate=5e-3,
                  td_weight=1.0,  # weight on the td error (surrogate based on target network)
@@ -75,6 +77,8 @@ class BehaviorPretraining(nn.Module):
         self.rs_weight = rs_weight / (td_weight+rs_weight)
         self.target_update_rate = target_update_rate
         self.expectile = expectile
+        self._Vmin = Vmin
+        self._Vmax = Vmax
 
         if self.qf is not None:
             assert self.policy is not None, 'Learning a q network requires a policy network.'
@@ -125,7 +129,7 @@ class BehaviorPretraining(nn.Module):
         # Q Loss with TD error and/or Residual Error using Target Q
         def compute_bellman_backup(v_next):
             assert rewards.shape == v_next.shape
-            return rewards + (1.-terminals.float())*self.discount*v_next
+            return (rewards + (1.-terminals.float())*self.discount*v_next).clamp(min=self._Vmin, max=self._Vmax)
         qf_loss = 0.
         # Update target
         update_exponential_moving_average(self.target_qf, self.qf, self.target_update_rate)
@@ -168,11 +172,11 @@ class BehaviorPretraining(nn.Module):
         update_exponential_moving_average(self.target_vf, self.vf, self.target_update_rate)
         if self.lambd>0:
             last_vs = self.target_vf(last_observations)  # inference
-            mc_estimates = returns + (1-last_terminals.float()) * self.discount**remaining_steps * last_vs
+            mc_estimates = (returns + (1-last_terminals.float()) * self.discount**remaining_steps * last_vs).clamp(min=self._Vmin, max=self._Vmax)
         if self.lambd<1:
             with torch.no_grad():
                 v_next = self.target_vf(next_observations)  # inference
-                td_targets = rewards + (1.-terminals.float())*self.discount*v_next
+                td_targets = (rewards + (1.-terminals.float())*self.discount*v_next).clamp(min=self._Vmin, max=self._Vmax)
         vs = self.vf(observations)  # inference
         # TD error
         td_error = 0.
