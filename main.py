@@ -47,6 +47,22 @@ def main(args):
     dataset = get_dataset(env)
     set_seed(args.seed, env=env)
 
+    # process rewards such that V(done)=0 is correct.
+    if  args.env_name in ('kitchen-complete-v0', 'kitchen-partial-v0', 'kitchen-mixed-v0'):
+        assert len(env.TASK_ELEMENTS) >= dataset['rewards'].max()
+        assert env.TERMINATE_ON_TASK_COMPLETE
+        dataset['rewards'] -= len(env.TASK_ELEMENTS)
+        # fix terminal issue
+        traj_data = tuple_to_traj_data(dataset)
+        for traj in traj_data:
+            traj['terminals'] = traj['rewards']==0
+            traj['timeouts'] = np.zeros_like(traj['timeouts'], dtype=bool)
+            traj['timeouts'][-1] = not traj['terminals'][-1]
+        dataset = traj_data_to_qlearning_data(traj_data)
+
+    Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount)) if args.clip_v else -float('inf')
+    Vmax = max(0.0, dataset['rewards'].max()/(1-args.discount)) if args.clip_v else  float('inf')
+
     # Setup logger
     log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta))
     log = Log(log_path, vars(args))
@@ -71,12 +87,15 @@ def main(args):
         qf_lr=args.fast_lr,
         # ATAC main parameters
         beta=args.beta, # the regularization coefficient in front of the Bellman error
+        Vmin=Vmin,
+        Vmax=Vmax,
     ).to(DEFAULT_DEVICE)
 
     # ------------------ Pretraining ------------------ #
     # Train policy and value to fit the behavior data
     bp = BehaviorPretraining(qf=qf, target_qf=target_qf, policy=policy, lr=args.fast_lr, discount=args.discount,
-                             td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim).to(DEFAULT_DEVICE)
+                             td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim,
+                             Vmin=Vmin, Vmax=Vmax,).to(DEFAULT_DEVICE)
     def bp_log_fun(metrics, step):
         print(step, metrics)
         for k, v in metrics.items():
@@ -124,4 +143,5 @@ if __name__ == '__main__':
     parser.add_argument('--eval_period', type=int, default=5000)
     parser.add_argument('--n_eval_episodes', type=int, default=10)
     parser.add_argument('--n_warmstart_steps', type=int, default=100*10**3)
+    parser.add_argument('--clip_v', action='store_true')
     main(parser.parse_args())
