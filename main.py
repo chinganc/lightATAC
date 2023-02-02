@@ -41,28 +41,34 @@ def get_dataset(env):
         except (HTTPError, OSError):
             print('Unable to download dataset. Retry.')
 
-def main(args):
-    # ------------------ Initialization ------------------ #
-    torch.set_num_threads(1)
-    env = gym.make(args.env_name)  # d4rl ENV
+def get_env_and_dataset(env_name):
+    env = gym.make(env_name)  # d4rl ENV
     dataset = get_dataset(env)
-    set_seed(args.seed, env=env)
-
     # process rewards such that V(done)=0 is correct.
-    if  args.env_name in ('kitchen-complete-v0', 'kitchen-partial-v0', 'kitchen-mixed-v0'):
+    if  env_name in ('kitchen-complete-v0', 'kitchen-partial-v0', 'kitchen-mixed-v0'):
         assert len(env.TASK_ELEMENTS) >= dataset['rewards'].max()
         assert env.TERMINATE_ON_TASK_COMPLETE
         dataset['rewards'] -= len(env.TASK_ELEMENTS)
-        # fix terminal issue
+        # fix inconsistent terminals
         traj_data = tuple_to_traj_data(dataset)
         for traj in traj_data:
             traj['terminals'] = traj['rewards']==0
             traj['timeouts'] = np.zeros_like(traj['timeouts'], dtype=bool)
             traj['timeouts'][-1] = not traj['terminals'][-1]
         dataset = traj_data_to_qlearning_data(traj_data)
+    return env, dataset
 
-    Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount)) if args.clip_v else -float('inf')
-    Vmax = max(0.0, dataset['rewards'].max()/(1-args.discount)) if args.clip_v else  float('inf')
+def main(args):
+    # ------------------ Initialization ------------------ #
+    torch.set_num_threads(1)
+    env, dataset = get_env_and_dataset(args.env_name)
+    set_seed(args.seed, env=env)
+
+    # Set range of value functions
+    Vmax, Vmin = float('inf'), -float('inf')
+    if args.clip_v:
+        Vmax = max(0.0, dataset['rewards'].max()/(1-args.discount))
+        Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount), Vmax-1.0/(1-args.discount))
 
     # Setup logger
     log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta))
