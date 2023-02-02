@@ -34,6 +34,7 @@ def eval_agent(*, env, agent, discount, n_eval_episodes, max_episode_steps=1000,
     return info_dict
 
 def get_dataset(env):
+    from urllib.error import HTTPError
     while True:
         try:
             return env.get_dataset()
