@@ -58,6 +58,7 @@ def add_next_observations(traj):
             for k, v in traj.items():
                 if k != "observations":
                     traj[k] = v[:-1]
+                traj['timeouts'][-1] = 1
         # At this point, traj['observations'] should have one more element than the others.
         traj["next_observations"] = traj["observations"][1:]
         traj["observations"] = traj["observations"][:-1]
