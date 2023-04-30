@@ -169,6 +169,7 @@ class BehaviorPretraining(nn.Module):
 
         # Monte-Carlo Q estimate
         mc_estimates = torch.zeros_like(rewards)
+        td_targets = torch.zeros_like(rewards)
         update_exponential_moving_average(self.target_vf, self.vf, self.target_update_rate)
         if self.lambd>0:
             last_vs = self.target_vf(last_observations)  # inference
@@ -180,7 +181,8 @@ class BehaviorPretraining(nn.Module):
         vs = self.vf(observations)  # inference
         # TD error
         td_error = 0.
-        vf_loss = asymmetric_l2_loss(td_targets - vs, self.expectile)
+        targets = td_targets*(1-self.lambd)+mc_estimates*self.lambd
+        vf_loss = asymmetric_l2_loss(targets - vs, self.expectile)
         # Log
         info_dict = {"V loss": vf_loss.item(),
                      "Average V value": vs.mean().item()}
