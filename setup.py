@@ -11,7 +11,7 @@ setup(
     description='A lightweight version of ATAC code',
     long_description=open('README.md').read(),
     install_requires=[
-        "gym==0.17.2",
+        # "gym==0.17.2",
         "torchaudio==0.12.1",
         "torch==1.12.1",
         "tensorboard==2.10.0",
