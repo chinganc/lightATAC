@@ -215,13 +215,13 @@ class BehaviorPretraining(nn.Module):
 
         elif torch.is_tensor(policy_outs):  # l2 loss
             assert policy_outs.shape == actions.shape
-            action_diff = policy_outs
+            new_actions = policy_outs
             policy_loss = torch.sum((action_diff - actions)**2, dim=1).mean()
         else:
             raise NotImplementedError
 
         info_dict = {"Policy loss": policy_loss.item(),
-                     "Action difference": torch.mean(torch.norm(actions - policy_outs, dim=1)).item(),}
+                     "Action difference": torch.mean(torch.norm(actions - new_actions, dim=1)).item(),}
         return policy_loss, info_dict
 
     def update(self, **batch):
