@@ -47,6 +47,8 @@ class ATAC(nn.Module):
                  # ATAC parameters
                  beta=1.0,  # the regularization coefficient in front of the Bellman error
                  norm_constraint=100,  # l2 norm constraint on the NN weight
+                 w1=0.5,  # weight on target error
+                 w2=0.5,  # weight on residual error
                  # ATAC0 parameters
                  init_observations=None, # Provide it to use ATAC0 (None or np.ndarray)
                  buffer_batch_size=256,  # for ATAC0 (sampling batch_size of init_observations)
@@ -70,6 +72,8 @@ class ATAC(nn.Module):
         self._state_terminal = state_terminal
         # norm constraint on the qf's weight; positive for l2; negative for l-inf
         self._projection = l2_projection(norm_constraint) if norm_constraint>=0 else  linf_projection(-norm_constraint)
+        self._w1 = w1/(w1+w2) # weight on target error
+        self._w2 = w2/(w1+w2) # weight on residual error
 
         # networks
         self.policy = policy
@@ -136,7 +140,7 @@ class ATAC(nn.Module):
                                              [actions,      new_next_actions,  pess_new_actions])
 
         qf_loss = 0
-        w1, w2 = 0.5, 0.5
+        w1, w2 = self._w1, self._w2
         for qfp, qfpn, qfna in zip(qf_pred_both, qf_pred_next_both, qf_new_actions_both):
             # Compute Bellman error
             assert qfp.shape == qfpn.shape == qfna.shape == q_target.shape
