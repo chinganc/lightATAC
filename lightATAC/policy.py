@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, TransformedDistribution, Normal
-from torch.distributions.transforms import TanhTransform
+from torch.distributions.transforms import TanhTransform, AffineTransform
 import numpy as np
 from .util import mlp
 
@@ -13,7 +13,8 @@ LOG_STD_MAX = 2.0
 
 class GaussianPolicy(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2,
-                init_std=1.0, use_tanh=False, min_std=1e-5, max_std=10, std_type='constant'):
+                init_std=1.0, use_tanh=False, min_std=1e-5, max_std=10, std_type='constant',
+                action_scale=1.0):
         super().__init__()
         init_log_std = np.log(init_std)
         self.std_type = std_type
@@ -30,6 +31,7 @@ class GaussianPolicy(nn.Module):
         self.use_tanh = use_tanh
         self.min_log_std = np.log(min_std)
         self.max_log_std = np.log(max_std)
+        self.action_scale = action_scale
 
     def forward(self, obs, ignore_tanh=None):
         if self.std_type=='diagonal':
@@ -46,6 +48,10 @@ class GaussianPolicy(nn.Module):
             raise ValueError
         if self.use_tanh and not ignore_tanh:
             dist = TransformedDistribution(dist, TanhTransform(cache_size=1))
+        if hasattr(self, 'action_scale'):  # backward compatibility
+            # apply scaling; this is mainly for addressing the numerical issue of tanh
+            dist = TransformedDistribution(dist,
+                    AffineTransform(0.0, self.action_scale, event_dim=1, cache_size=1))
         return dist
 
     def act(self, obs, deterministic=False, enable_grad=False):
