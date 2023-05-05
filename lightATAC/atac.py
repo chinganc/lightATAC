@@ -16,6 +16,14 @@ def l2_projection(constraint):
             w.mul_(torch.clip(constraint/norm, max=1))
     return fn
 
+def linf_projection(constraint):
+    @torch.no_grad()
+    def fn(module):
+        if hasattr(module, 'weight') and constraint>0:
+            w = module.weight
+            w.clamp_(-constraint, constraint)
+    return fn
+
 class ATAC(nn.Module):
     """ Adversarilly Trained Actor Critic """
     def __init__(self, *,
@@ -26,6 +34,7 @@ class ATAC(nn.Module):
                  discount=0.99,
                  Vmin=-float('inf'), # min value of Q (used in target backup)
                  Vmax=float('inf'), # max value of Q (used in target backup)
+                 state_terminal=False, # whether the terminal depends only on the current state
                  # Optimization parameters
                  policy_lr=5e-7,
                  qf_lr=5e-4,
@@ -38,6 +47,8 @@ class ATAC(nn.Module):
                  # ATAC parameters
                  beta=1.0,  # the regularization coefficient in front of the Bellman error
                  norm_constraint=100,  # l2 norm constraint on the NN weight
+                 w1=0.5,  # weight on target error
+                 w2=0.5,  # weight on residual error
                  # ATAC0 parameters
                  init_observations=None, # Provide it to use ATAC0 (None or np.ndarray)
                  buffer_batch_size=256,  # for ATAC0 (sampling batch_size of init_observations)
@@ -47,7 +58,7 @@ class ATAC(nn.Module):
 
         #############################################################################################
         super().__init__()
-        assert beta>=0 and norm_constraint>=0
+        assert beta>=0
         policy_lr = qf_lr if policy_lr is None or policy_lr < 0 else policy_lr # use shared lr if not provided.
         self._debug = debug  # log extra info
 
@@ -58,7 +69,11 @@ class ATAC(nn.Module):
         self._discount = discount
         self._Vmin = Vmin  # lower bound on the target
         self._Vmax = Vmax  # upper bound on the target
-        self._norm_constraint = norm_constraint  # l2 norm constraint on the qf's weight; if negative, it gives the weight decay coefficient.
+        self._state_terminal = state_terminal
+        # norm constraint on the qf's weight; positive for l2; negative for l-inf
+        self._projection = l2_projection(norm_constraint) if norm_constraint>=0 else  linf_projection(-norm_constraint)
+        self._w1 = w1/(w1+w2) # weight on target error
+        self._w2 = w2/(w1+w2) # weight on residual error
 
         # networks
         self.policy = policy
@@ -125,7 +140,7 @@ class ATAC(nn.Module):
                                              [actions,      new_next_actions,  pess_new_actions])
 
         qf_loss = 0
-        w1, w2 = 0.5, 0.5
+        w1, w2 = self._w1, self._w2
         for qfp, qfpn, qfna in zip(qf_pred_both, qf_pred_next_both, qf_new_actions_both):
             # Compute Bellman error
             assert qfp.shape == qfpn.shape == qfna.shape == q_target.shape
@@ -133,6 +148,8 @@ class ATAC(nn.Module):
             q_backup = compute_bellman_backup(qfpn)  # compared with `q_target``, the gradient of `self._qf` is traced in `q_backup`.
             residual_error = F.mse_loss(qfp, q_backup)
             qf_bellman_loss = w1*target_error+ w2*residual_error
+            if self._state_terminal:  # since we know the exact value for state-based terminals.
+                qf_bellman_loss += (((qfna - q_backup)*terminals)**2).mean()
             # Compute pessimism term
             if self._init_observations is None:  # ATAC
                 pess_loss = (qfna - qfp).mean()
@@ -145,7 +162,7 @@ class ATAC(nn.Module):
         self._qf_optimizer.zero_grad()
         qf_loss.backward()
         self._qf_optimizer.step()
-        self._qf.apply(l2_projection(self._norm_constraint))
+        self._qf.apply(self._projection)
         update_exponential_moving_average(self._target_qf, self._qf, self._tau)
 
         ##### Update Actor #####
@@ -179,7 +196,8 @@ class ATAC(nn.Module):
                         alpha_loss=alpha_loss.item(),
                         policy_entropy=policy_entropy.item(),
                         alpha=alpha.item(),
-                        lower_bound=lower_bound.item())
+                        lower_bound=lower_bound.item(),
+                        policy_grad=sum([ x.grad.norm() for x in self.policy.parameters()]).item())
 
         # For logging
         if self._debug:

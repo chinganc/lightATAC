@@ -86,6 +86,7 @@ def main(args):
     rl = ATAC(
         policy=policy,
         qf=qf,
+        target_qf=target_qf,
         optimizer=torch.optim.Adam,
         discount=args.discount,
         action_shape=act_dim,
