@@ -33,7 +33,7 @@ class GaussianPolicy(nn.Module):
         self.max_log_std = np.log(max_std)
         self.action_scale = action_scale
 
-    def forward(self, obs, ignore_tanh=None):
+    def forward(self, obs, ignore_transform=False):
         if self.std_type=='diagonal':
             out = self.net(obs)
             mean, log_std = out.split(out.shape[-1]//2, dim=-1)
@@ -46,9 +46,9 @@ class GaussianPolicy(nn.Module):
             dist = MultivariateNormal(mean, scale_tril=scale_tril)
         else:
             raise ValueError
-        if self.use_tanh and not ignore_tanh:
+        if self.use_tanh and not ignore_transform:
             dist = TransformedDistribution(dist, TanhTransform(cache_size=1))
-        if hasattr(self, 'action_scale'):  # backward compatibility
+        if not ignore_transform and hasattr(self, 'action_scale'):  # backward compatibility
             # apply scaling; this is mainly for addressing the numerical issue of tanh
             dist = TransformedDistribution(dist,
                     AffineTransform(0.0, self.action_scale, event_dim=1, cache_size=1))
@@ -56,10 +56,12 @@ class GaussianPolicy(nn.Module):
 
     def act(self, obs, deterministic=False, enable_grad=False):
         with torch.set_grad_enabled(enable_grad):
-            dist = self(obs, ignore_tanh=True)  # just Gaussian
+            dist = self(obs, ignore_transform=True)  # just Gaussian
             act = dist.mean if deterministic else dist.sample()
             if self.use_tanh:
                 act = torch.tanh(act)
+            if hasattr(self, 'action_scale'):
+                act *= self.action_scale
             return act
 
 
