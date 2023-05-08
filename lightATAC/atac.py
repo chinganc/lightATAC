@@ -129,7 +129,7 @@ class ATAC(nn.Module):
             pess_new_actions = new_actions.detach()
             pess_observations = observations
         else:  # initial state pessimism
-            idx_ = np.random.choice(len(self._init_observations), self._buffer_batch_size)
+            idx_ = np.random.choice(len(self._init_observations), min(self._buffer_batch_size, len(rewards)))
             init_observations = torchify(self._init_observations[idx_])
             init_actions_dist = self.policy(init_observations)
             pess_new_actions = init_actions_dist.rsample().detach()
