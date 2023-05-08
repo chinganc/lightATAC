@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum
+from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify
 
 
 def l2_projection(constraint):
@@ -130,8 +130,8 @@ class ATAC(nn.Module):
             pess_observations = observations
         else:  # initial state pessimism
             idx_ = np.random.choice(len(self._init_observations), self._buffer_batch_size)
-            init_observations = self._init_observations[idx_]
-            init_actions_dist = self.policy(init_observations)[0]
+            init_observations = torchify(self._init_observations[idx_])
+            init_actions_dist = self.policy(init_observations)
             pess_new_actions = init_actions_dist.rsample().detach()
             pess_observations = init_observations
 
