@@ -229,12 +229,13 @@ def update_exponential_moving_average(target, source, alpha):
 
 
 def torchify(x):
-    if torch.is_tensor(x):
-        return x
-    x = torch.from_numpy(x)
+    assert type(x) is np.ndarray or torch.is_tensor(x), "Unsupported type: {}".format(type(x))
+    if not torch.is_tensor(x):
+        x = torch.from_numpy(x)
+    if x.device != DEFAULT_DEVICE:
+        x = x.to(device=DEFAULT_DEVICE)
     if x.dtype is torch.float64:
         x = x.float()
-    x = x.to(device=DEFAULT_DEVICE)
     return x
 
 
