@@ -221,7 +221,8 @@ class BehaviorPretraining(nn.Module):
             raise NotImplementedError
 
         info_dict = {"Policy loss": policy_loss.item(),
-                     "Action difference": torch.mean(torch.norm(actions - new_actions, dim=1)).item(),}
+                     "Action difference": torch.mean(torch.norm(actions - new_actions, dim=1)).item(),
+                     'alpha': self._log_alpha.exp().detach().item()}
         return policy_loss, info_dict
 
     def update(self, **batch):
