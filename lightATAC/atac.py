@@ -170,7 +170,7 @@ class ATAC(nn.Module):
         log_pi_new_actions = new_actions_dist.log_prob(new_actions)
         policy_entropy = -log_pi_new_actions.mean()
 
-        alpha_loss = 0
+        alpha_loss = torch.tensor(0.0)
         if self._use_automatic_entropy_tuning:  # it comes first; seems to work also when put after policy update
             alpha_loss = self._log_alpha * (policy_entropy.detach() - self._target_entropy)  # entropy - target
             self._alpha_optimizer.zero_grad()
