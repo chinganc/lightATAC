@@ -24,6 +24,9 @@ def linf_projection(constraint):
             w.clamp_(-constraint, constraint)
     return fn
 
+def clamp(x, Vmin, Vmax): # clamp with gradient flow
+    return x + (Vmax-x).clamp(max=0).detach() - (x-Vmin).clamp(max=0).detach()
+
 class ATAC(nn.Module):
     """ Adversarilly Trained Actor Critic """
     def __init__(self, *,
@@ -55,6 +58,7 @@ class ATAC(nn.Module):
                  buffer_batch_size=256,  # for ATAC0 (sampling batch_size of init_observations)
                  # Misc
                  debug=True,
+                 v2=False,
                  ):
 
         #############################################################################################
@@ -62,6 +66,9 @@ class ATAC(nn.Module):
         assert beta>=0
         policy_lr = qf_lr if policy_lr is None or policy_lr < 0 else policy_lr # use shared lr if not provided.
         self._debug = debug  # log extra info
+
+        self._v2 = v2  # enable v2 features
+            # disable_pess_q0, use clamp with gradient
 
         # ATAC main parameter
         self.beta = beta # regularization constant on the Bellman surrogate
@@ -71,7 +78,6 @@ class ATAC(nn.Module):
         self._Vmin = Vmin  # lower bound on the target
         self._Vmax = Vmax  # upper bound on the target
         self._state_terminal = state_terminal
-        self._disable_pess_q0 = disable_pess_q0
 
         # norm constraint on the qf's weight; positive for l2; negative for l-inf
         self._projection = l2_projection(norm_constraint) if norm_constraint>=0 else  linf_projection(-norm_constraint)
@@ -115,7 +121,10 @@ class ATAC(nn.Module):
         ##### Update Critic #####
         def compute_bellman_backup(q_pred_next):
             assert rewards.shape == q_pred_next.shape
-            return (rewards + (1.-terminals)*self._discount*q_pred_next).clamp(min=self._Vmin, max=self._Vmax)
+            if self._v2:
+                return clamp(rewards + (1.-terminals)*self._discount*q_pred_next, self._Vmin, self._Vmax)
+            else:
+                return (rewards + (1.-terminals)*self._discount*q_pred_next).clamp(min=self._Vmin, max=self._Vmax)
 
         # Pre-computation
         with torch.no_grad():  # regression target
@@ -158,7 +167,7 @@ class ATAC(nn.Module):
                 pess_loss = (qfna - qfp).mean()
             else:  # initial state pess. ATAC0
                 pess_loss = qfna.mean()
-            if self._disable_pess_q0 and i==0:
+            if self._v2 and i==0:
                 pess_loss = pess_loss.detach()
             ## Compute full q loss (qf_loss = pess_loss + beta * qf_bellman_loss)
             qf_loss += normalized_sum(pess_loss, qf_bellman_loss, self.beta)
