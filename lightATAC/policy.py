@@ -14,17 +14,30 @@ LOG_STD_MAX = 2.0
 class GaussianPolicy(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2,
                 init_std=1.0, use_tanh=False, min_std=1e-5, max_std=10, std_type='constant',
-                action_scale=1.0):
+                action_scale=1.0, activation=nn.ReLU):
         super().__init__()
         init_log_std = np.log(init_std)
         self.std_type = std_type
         if self.std_type=='diagonal':
             # the first half of output predicts the mean; the second half predicts log_std
-            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim*2])
+            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim*2], activation=activation)
             self.net[-1].weight.data[act_dim:] *= 0.
             self.net[-1].bias.data[act_dim:] = init_log_std
+        elif self.std_type=='diagonal_detached':
+            # the first half of output predicts the mean; the second half predicts log_std
+            self.feature = mlp([obs_dim, *([hidden_dim] * (n_hidden-1)), hidden_dim], activation=activation, output_activation=activation)
+            self.mean_net =  nn.Sequential(nn.Linear(hidden_dim, act_dim))
+            self.log_std_net =  nn.Sequential(nn.Linear(hidden_dim, act_dim))
+            self.log_std_net[-1].weight.data[:] *= 0.
+            self.log_std_net[-1].bias.data[:] = init_log_std
+        elif self.std_type=='separate':
+            # the first half of output predicts the mean; the second half predicts log_std
+            self.mean_net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=activation)
+            self.log_std_net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=activation)
+            self.log_std_net[-1].weight.data[:] *= 0.
+            self.log_std_net[-1].bias.data[:] = init_log_std
         elif self.std_type=='constant':
-            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim])
+            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=activation)
             self.log_std = nn.Parameter(torch.ones(act_dim, dtype=torch.float32)* init_log_std)
         else:
             raise ValueError
@@ -37,6 +50,16 @@ class GaussianPolicy(nn.Module):
         if self.std_type=='diagonal':
             out = self.net(obs)
             mean, log_std = out.split(out.shape[-1]//2, dim=-1)
+            std = torch.exp(log_std.clamp(self.min_log_std, self.max_log_std))
+            dist = Normal(mean, std)
+        elif self.std_type=='diagonal_detached+':
+            feature = self.feature(obs)
+            mean = self.mean_net(feature)
+            log_std = self.log_std_net(feature.detach())
+            std = torch.exp(log_std.clamp(self.min_log_std, self.max_log_std))
+            dist = Normal(mean, std)
+        elif self.std_type=='separate':
+            mean, log_std = self.mean_net(obs), self.log_std_net(obs)
             std = torch.exp(log_std.clamp(self.min_log_std, self.max_log_std))
             dist = Normal(mean, std)
         elif self.std_type=='constant':
