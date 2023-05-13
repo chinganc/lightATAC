@@ -42,7 +42,7 @@ class ATAC(nn.Module):
                  policy_lr=5e-7,
                  qf_lr=5e-4,
                  target_update_tau=5e-3,
-                 disable_pess_q0=False, # disable pessimism on the first critic
+                 grad_norm_max=100, # disable pessimism on the first critic
                  # Entropy control
                  action_shape=None,  # shape of the action space
                  fixed_alpha=None,
@@ -68,7 +68,8 @@ class ATAC(nn.Module):
         self._debug = debug  # log extra info
 
         self._v2 = v2  # enable v2 features
-            # disable_pess_q0, use clamp with gradient
+        # disable_pess_q0, use clamp with gradient, grad_clipping
+        self._grad_norm_max = grad_norm_max
 
         # ATAC main parameter
         self.beta = beta # regularization constant on the Bellman surrogate
@@ -200,6 +201,8 @@ class ATAC(nn.Module):
 
         self._policy_optimizer.zero_grad()
         policy_loss.backward()
+        if self._v2:
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self._grad_norm_max)
         self._policy_optimizer.step()
 
         # Log
