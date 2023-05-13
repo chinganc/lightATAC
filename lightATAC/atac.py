@@ -39,6 +39,7 @@ class ATAC(nn.Module):
                  policy_lr=5e-7,
                  qf_lr=5e-4,
                  target_update_tau=5e-3,
+                 disable_pess_q0=False, # disable pessimism on the first critic
                  # Entropy control
                  action_shape=None,  # shape of the action space
                  fixed_alpha=None,
@@ -70,6 +71,8 @@ class ATAC(nn.Module):
         self._Vmin = Vmin  # lower bound on the target
         self._Vmax = Vmax  # upper bound on the target
         self._state_terminal = state_terminal
+        self._disable_pess_q0 = disable_pess_q0
+
         # norm constraint on the qf's weight; positive for l2; negative for l-inf
         self._projection = l2_projection(norm_constraint) if norm_constraint>=0 else  linf_projection(-norm_constraint)
         self._w1 = w1/(w1+w2) # weight on target error
@@ -141,7 +144,7 @@ class ATAC(nn.Module):
 
         qf_loss = 0
         w1, w2 = self._w1, self._w2
-        for qfp, qfpn, qfna in zip(qf_pred_both, qf_pred_next_both, qf_new_actions_both):
+        for i, (qfp, qfpn, qfna) in enumerate(zip(qf_pred_both, qf_pred_next_both, qf_new_actions_both)):
             # Compute Bellman error
             assert qfp.shape == qfpn.shape == qfna.shape == q_target.shape
             target_error = F.mse_loss(qfp, q_target)
@@ -155,6 +158,8 @@ class ATAC(nn.Module):
                 pess_loss = (qfna - qfp).mean()
             else:  # initial state pess. ATAC0
                 pess_loss = qfna.mean()
+            if self._disable_pess_q0 and i==0:
+                pess_loss = pess_loss.detach()
             ## Compute full q loss (qf_loss = pess_loss + beta * qf_bellman_loss)
             qf_loss += normalized_sum(pess_loss, qf_bellman_loss, self.beta)
 
