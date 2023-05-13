@@ -52,7 +52,7 @@ class GaussianPolicy(nn.Module):
             mean, log_std = out.split(out.shape[-1]//2, dim=-1)
             std = torch.exp(log_std.clamp(self.min_log_std, self.max_log_std))
             dist = Normal(mean, std)
-        elif self.std_type=='diagonal_detached+':
+        elif self.std_type=='diagonal_detached':
             feature = self.feature(obs)
             mean = self.mean_net(feature)
             log_std = self.log_std_net(feature.detach())
