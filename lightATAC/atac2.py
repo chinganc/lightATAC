@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify
-
+from functools import partial
 
 def clamp(x, Vmin, Vmax): # clamp with gradient flow
     return x + (Vmax-x).clamp(max=0).detach() - (x-Vmin).clamp(max=0).detach()
@@ -84,14 +84,13 @@ class ATAC(nn.Module):
             assert rewards.shape == q_pred_next.shape
             return clamp(rewards + (1.-terminals)*self._discount*q_pred_next, self._Vmin, self._Vmax)
 
-        # Pre-computation
+        ## Pre-computation
         with torch.no_grad():  # regression target
             new_next_actions = self.policy(next_observations).sample()
             target_q_values = self._target_qf(next_observations, new_next_actions)  # projection
             q_target = compute_bellman_backup(target_q_values.flatten())
 
-        new_actions_dist = self.policy(observations)  # This will be used to compute the entropy
-        new_actions = new_actions_dist.rsample() # These samples will be used for the actor update too, so they need to be traced.
+        new_actions = self.policy(observations).rsample() # These samples will be used for the actor update too, so they need to be traced.
 
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_new_actions = new_actions.detach()
@@ -103,33 +102,28 @@ class ATAC(nn.Module):
             pess_new_actions = init_actions_dist.rsample().detach()
             pess_observations = init_observations
 
-        qf_pred_both, qf_pred_next_both, qf_new_actions_both \
-            = compute_batched(self._qf.both, [observations, next_observations, pess_observations],
-                                             [actions,      new_next_actions,  pess_new_actions])
-
+        ## Compute Q loss
         qf_loss = 0
-        w1, w2 = self._w1, self._w2
-        for i, (qfp, qfpn, qfna) in enumerate(zip(qf_pred_both, qf_pred_next_both, qf_new_actions_both)):
-            # Compute Bellman error
-            assert qfp.shape == qfpn.shape == qfna.shape == q_target.shape
-            target_error = F.mse_loss(qfp, q_target)
-
-            # Compute pessimism term
-            if self._init_observations is None:  #  relative pessimism (ATAC)
-                pess_loss = (qfna - qfp).mean()
-            else:  # absolute pessimism (PSPI)
-                pess_loss = qfna.mean()
-
-            if i != len(qf_pred_both)-1:  # use td loss only
-                pess_loss = pess_loss.detach()
-                qf_bellman_loss = target_error
-            else:  # use tdrs loss
-                q_backup = compute_bellman_backup(qfpn)  # compared with `q_target``, the gradient of `self._qf` is traced in `q_backup`.
-                residual_error = F.mse_loss(qfp, q_backup)
-                qf_bellman_loss = w1*target_error+ w2*residual_error
-
-            ## Compute full q loss (qf_loss = pess_loss + beta * qf_bellman_loss)
-            qf_loss += normalized_sum(pess_loss, qf_bellman_loss, self.beta)
+        q1, q2 = partial(self._qf.both, index=0), partial(self._qf.both, index=1)
+        # q1 loss (TD Bellman error)
+        q1_pred = q1(observations, actions, index=0)
+        target_error = F.mse_loss(q1_pred, q_target)
+        qf_loss += target_error  # target error
+        # q2 loss (Pessimism term + TDRS Bellman error)
+        q2_pred, q2_pred_next, q2_pess_actions \
+            = compute_batched(q2, [observations, next_observations, pess_observations],
+                                  [actions,      new_next_actions,  pess_new_actions])
+        # Compute pessimism term
+        if self._init_observations is None:  #  relative pessimism (ATAC)
+            pess_loss = (q2_pess_actions - q2_pred).mean()
+        else:  # absolute pessimism (PSPI)
+            pess_loss = q2_pess_actions.mean()
+        # Compute Bellman error
+        q2_backup = compute_bellman_backup(q2_pred_next)  # compared with `q_target``, the gradient of `self._qf` is traced in `q_backup`.
+        residual_error = F.mse_loss(q2_pred, q2_backup)
+        target_error = F.mse_loss(q2_pred, q_target)
+        qf_bellman_loss = self._w1*target_error+ self._w2*residual_error  # tdrs
+        qf_loss += normalized_sum(pess_loss, qf_bellman_loss, self.beta) # qf_loss = pess_loss + beta * qf_bellman_loss)
 
         # Update q
         self._qf_optimizer.zero_grad()
@@ -137,23 +131,19 @@ class ATAC(nn.Module):
         self._qf_optimizer.step()
         update_exponential_moving_average(self._target_qf, self._qf, self._tau)
 
-
         # Log
         log_info = dict(qf_loss=qf_loss.item(),
                         qf_bellman_loss=qf_bellman_loss.item(),
                         pess_loss=pess_loss.item())
-
-        # For logging
         if self._debug:
             with torch.no_grad():
                 debug_log_info = dict(
                         bellman_surrogate=residual_error.item(),
-                        qf1_pred_mean=qf_pred_both[0].mean().item(),
-                        qf2_pred_mean = qf_pred_both[1].mean().item(),
+                        qf1_pred_mean=q1_pred.mean().item(),
+                        qf2_pred_mean = q2_pred.mean().item(),
                         q_target_mean = q_target.mean().item(),
                         target_q_values_mean = target_q_values.mean().item(),
-                        qf1_new_actions_mean = qf_new_actions_both[0].mean().item(),
-                        qf2_new_actions_mean = qf_new_actions_both[1].mean().item(),
+                        q2_pess_actions_mean = q2_pess_actions.mean().item(),
                         action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
                         )
             log_info.update(debug_log_info)
@@ -166,8 +156,7 @@ class ATAC(nn.Module):
         self._qf.requires_grad_(False)
         lower_bound = self._qf.both(observations, new_actions)[-1].mean() # just use one network
         self._qf.requires_grad_(True)
-        policy_loss = -lower_bound
-
+        policy_loss = - lower_bound
         self._policy_optimizer.zero_grad()
         policy_loss.backward()
         self._policy_optimizer.step()

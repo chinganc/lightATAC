@@ -8,7 +8,7 @@ from lightATAC.policy import GaussianPolicy
 from lightATAC.value_functions import TwinQ, ValueFunction
 from lightATAC.util import Log, set_seed
 from lightATAC.bp import BehaviorPretraining
-from lightATAC.atac import ATAC
+from lightATAC.atac2 import ATAC
 from lightATAC.util import evaluate_policy, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data, DEFAULT_DEVICE
 
 EPS=1e-6
@@ -89,7 +89,6 @@ def main(args):
         target_qf=target_qf,
         optimizer=torch.optim.Adam,
         discount=args.discount,
-        action_shape=act_dim,
         buffer_batch_size=args.batch_size,
         policy_lr=args.slow_lr,
         qf_lr=args.fast_lr,
