@@ -18,6 +18,7 @@ setup(
         "psutil==5.9.1",
         "protobuf==3.19.4",
         "dowel==0.0.4",
-        "d4rl@git+https://github.com/rail-berkeley/d4rl@6330b4e09e36a80f4b706a3885d59d97745c05a9"
+        "d4rl@git+https://github.com/rail-berkeley/d4rl@6330b4e09e36a80f4b706a3885d59d97745c05a9",
+        "Cython==0.29.36",
     ]
 )
