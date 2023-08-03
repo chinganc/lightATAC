@@ -105,10 +105,10 @@ def main(args):
         print(step, metrics)
         for k, v in metrics.items():
             writer.add_scalar('BehaviorPretraining/'+k, v, step)
-    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun)  # This ensures "next_observations" is in `dataset`.
+    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
 
     # Main Training
-    for step in trange(args.n_steps):
+    for step in trange(args.n_steps, disable=args.disable_tqdm):
         train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
         if step % max(int(args.eval_period/10),1) == 0  or  step==args.n_steps-1:
             print(train_metrics)
@@ -131,7 +131,7 @@ def main(args):
 
 
 
-if __name__ == '__main__':
+def get_parser():
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('--env_name', required=True)
@@ -150,4 +150,9 @@ if __name__ == '__main__':
     parser.add_argument('--n_eval_episodes', type=int, default=10)
     parser.add_argument('--n_warmstart_steps', type=int, default=100*10**3)
     parser.add_argument('--clip_v', action='store_true')
+    parser.add_argument('--disable_tqdm', action='store_true')
+    return parser
+
+if __name__ == '__main__':
+    parser = get_parser()
     main(parser.parse_args())
