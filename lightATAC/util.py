@@ -4,7 +4,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-import torchaudio
 from scipy import signal
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -91,6 +90,7 @@ def asymmetric_l2_loss(u, tau):
     return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
 
 def discount_cumsum(x, discount):
+    import torchaudio
     """Discounted cumulative sum.
     See https://docs.scipy.org/doc/scipy/reference/tutorial/signal.html#difference-equation-filtering  # noqa: E501
     Here, we have y[t] - discount*y[t+1] = x[t]
