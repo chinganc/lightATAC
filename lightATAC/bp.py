@@ -6,6 +6,16 @@ from tqdm import trange
 from copy import deepcopy
 from lightATAC.util import compute_batched, discount_cumsum, sample_batch, \
         traj_data_to_qlearning_data, tuple_to_traj_data, update_exponential_moving_average, normalized_sum, asymmetric_l2_loss
+from lightATAC.policy import Probabilty
+
+def d2c(x, dim, min=-1, max=1, n=10):
+    # reverse of c2d
+    if len(x.shape)==0:  # add a batch dim
+        x = x[np.newaxis]
+    if len(x.shape)==1:
+        x = x[:,np.newaxis]
+    x = x // np.repeat(n**np.arange(dim)[np.newaxis,...], len(x), axis=0) % n
+    return (x/(n-1))*(max-min)+min
 
 class BehaviorPretraining(nn.Module):
     """
@@ -196,7 +206,7 @@ class BehaviorPretraining(nn.Module):
         else:
             policy_outs = self.policy(observations)
 
-        if isinstance(policy_outs, torch.distributions.Distribution):  # MLE
+        if isinstance(policy_outs, torch.distributions.Distribution) or isinstance(policy_outs, Probabilty):  # MLE
             policy_loss = -policy_outs.log_prob(actions).mean()
             if self._log_alpha > -float("Inf"):
                 new_actions_dist = policy_outs
@@ -219,10 +229,22 @@ class BehaviorPretraining(nn.Module):
             policy_loss = torch.sum((action_diff - actions)**2, dim=1).mean()
         else:
             raise NotImplementedError
-
         info_dict = {"Policy loss": policy_loss.item(),
-                     "Action difference": torch.mean(torch.norm(actions - new_actions, dim=1)).item(),
                      'alpha': self._log_alpha.exp().detach().item()}
+
+
+
+        if actions.dtype == torch.float32 and new_actions.dtype == torch.float32:
+            info_dict["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
+        else:
+             # XXX debug
+            from torch.distributions.categorical import Categorical
+            new_actions_discrete = Categorical(logits=policy_outs.logits).sample()
+            new_actions = torch.tensor(d2c(new_actions_discrete.cpu().numpy(), self.policy.act_dim, n=self.policy.n_bins))
+            actions = torch.tensor(d2c(actions.cpu().numpy(), self.policy.act_dim, n=self.policy.n_bins))
+            info_dict["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
+
+
         return policy_loss, info_dict
 
     def update(self, **batch):

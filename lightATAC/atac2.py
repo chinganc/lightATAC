@@ -79,6 +79,9 @@ class ATAC(nn.Module):
         rewards = rewards.flatten()
         terminals = terminals.flatten().float()
 
+        if not torch.is_floating_point(actions) and len(actions.shape)==1:  #  convert to 1-hot
+            actions = F.one_hot(actions, num_classes=self.policy.n_bins**self.policy.act_dim).float()
+
         ##### Update Critic #####
         def compute_bellman_backup(q_pred_next):
             assert rewards.shape == q_pred_next.shape
@@ -104,15 +107,14 @@ class ATAC(nn.Module):
 
         ## Compute Q loss
         qf_loss = 0
-        q1, q2 = partial(self._qf.both, index=0), partial(self._qf.both, index=1)
         # q1 loss (TD Bellman error)
-        q1_pred = q1(observations, actions, index=0)
+        q1_pred = self._qf.q1(observations, actions)
         target_error = F.mse_loss(q1_pred, q_target)
         qf_loss += target_error  # target error
         # q2 loss (Pessimism term + TDRS Bellman error)
         q2_pred, q2_pred_next, q2_pess_actions \
-            = compute_batched(q2, [observations, next_observations, pess_observations],
-                                  [actions,      new_next_actions,  pess_new_actions])
+            = compute_batched(self._qf.q2, [observations, next_observations, pess_observations],
+                                           [actions,      new_next_actions,  pess_new_actions])
         # Compute pessimism term
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_loss = (q2_pess_actions - q2_pred).mean()
