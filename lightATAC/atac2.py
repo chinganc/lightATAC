@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify
+from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify, safe_rsample, expected_value
 from functools import partial
 
 def clamp(x, Vmin, Vmax): # clamp with gradient flow
@@ -90,7 +90,8 @@ class ATAC(nn.Module):
             target_q_values = self._target_qf(next_observations, new_next_actions)  # projection
             q_target = compute_bellman_backup(target_q_values.flatten())
 
-        new_actions = self.policy(observations).rsample() # These samples will be used for the actor update too, so they need to be traced.
+        # These samples will be used for the actor update too, so they need to be traced.
+        new_actions = safe_rsample(self.policy(observations))
 
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_new_actions = new_actions.detach()
@@ -99,7 +100,7 @@ class ATAC(nn.Module):
             idx_ = np.random.choice(len(self._init_observations), min(self._buffer_batch_size, len(rewards)))
             init_observations = torchify(self._init_observations[idx_])
             init_actions_dist = self.policy(init_observations)
-            pess_new_actions = init_actions_dist.rsample().detach()
+            pess_new_actions = init_actions_dist.sample()
             pess_observations = init_observations
 
         ## Compute Q loss
@@ -110,9 +111,17 @@ class ATAC(nn.Module):
         target_error = F.mse_loss(q1_pred, q_target)
         qf_loss += target_error  # target error
         # q2 loss (Pessimism term + TDRS Bellman error)
-        q2_pred, q2_pred_next, q2_pess_actions \
-            = compute_batched(q2, [observations, next_observations, pess_observations],
-                                  [actions,      new_next_actions,  pess_new_actions])
+        if pess_new_actions.shape == actions.shape:
+            q2_pred, q2_pred_next, q2_pess_actions \
+                = compute_batched(q2, [observations, next_observations, pess_observations],
+                                      [actions,      new_next_actions,  pess_new_actions])
+        else:
+            # GMM policy with ATAC
+            q2_pred, q2_pred_next \
+                = compute_batched(q2, [observations, next_observations],
+                                      [actions,      new_next_actions])
+            # Separately compute Q value for GMM outputs
+            q2_pess_actions = expected_value(q2, pess_observations, pess_new_actions)
         # Compute pessimism term
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_loss = (q2_pess_actions - q2_pred).mean()
@@ -137,6 +146,13 @@ class ATAC(nn.Module):
                         pess_loss=pess_loss.item())
         if self._debug:
             with torch.no_grad():
+                if actions.shape == new_actions.shape:
+                    action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
+                else:
+                    # GMM policy
+                    action_diff = expected_value(lambda a, na: torch.norm(a - na, dim=1),
+                                                 actions,
+                                                 new_actions).mean().item()
                 debug_log_info = dict(
                         bellman_surrogate=residual_error.item(),
                         qf1_pred_mean=q1_pred.mean().item(),
@@ -144,7 +160,7 @@ class ATAC(nn.Module):
                         q_target_mean = q_target.mean().item(),
                         target_q_values_mean = target_q_values.mean().item(),
                         q2_pess_actions_mean = q2_pess_actions.mean().item(),
-                        action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
+                        action_diff = action_diff
                         )
             log_info.update(debug_log_info)
 
@@ -154,7 +170,12 @@ class ATAC(nn.Module):
 
         ##### Update Actor #####
         self._qf.requires_grad_(False)
-        lower_bound = self._qf.both(observations, new_actions)[-1].mean() # just use one network
+
+        if new_actions.shape == actions.shape:
+            lower_bound = q2(observations, new_actions).mean() # just use one network
+        else:
+            # GMM policy
+            lower_bound = expected_value(q2, observations, new_actions).mean()
         self._qf.requires_grad_(True)
         policy_loss = - lower_bound
         self._policy_optimizer.zero_grad()

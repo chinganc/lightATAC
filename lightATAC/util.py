@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 import torchaudio
 from scipy import signal
+from torch.distributions import MixtureSameFamily
+
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -324,3 +326,45 @@ class Log:
         self.txt_file.close()
         if self.csv_file is not None:
             self.csv_file.close()
+
+
+def safe_rsample(dist):
+    """
+    Reparameterized sampling for distributions with rsample() implemented
+    as well as MixtureSameFamily.
+    In the case of MixtureSameFamily, returns a tensor of shape [..., n_modes, action_dim + 1],
+    where rsample[..., :-1] is the reparameterized sample from the component distributions,
+    and rsample[..., -1] is the probability from mixture distribution (usually Categorical)
+    """
+    if dist.has_rsample:
+        return dist.rsample()
+    else:
+        assert isinstance(dist, MixtureSameFamily)
+        # XXX: assumes action is flat
+        rsample = torch.cat((dist.component_distribution.rsample(),
+                             dist.mixture_distribution.probs.unsqueeze(-1)),
+                             dim=-1)
+        return rsample
+
+def expected_value(f, observations, gmm_rsample_actions):
+    """
+    Computes the expected value of f(observations, sampled_actions),
+    Mainly used for computing the expected Q value for a GMM policy.
+    """
+    # Repeat observations to match action batch size
+    # XXX: does not work if there is time dimension after batch dim or the observation is an image
+    assert len(observations.shape) == 2 and len(gmm_rsample_actions.shape) == 3
+
+    batch_size, obs_dim = observations.shape
+    _, n_modes, act_dim_plus_1 = gmm_rsample_actions.shape
+    observations = torch.tile(observations.unsqueeze(1),
+                              [1, n_modes, 1])
+    # Split actions and mixture probs
+    actions_all = gmm_rsample_actions[..., :-1]
+    actions_probs = gmm_rsample_actions[..., -1]
+
+    obs_flat = observations.view(batch_size * n_modes, obs_dim)
+    act_flat = actions_all.view(batch_size * n_modes, act_dim_plus_1 - 1)
+    # Evaluate all actions and take expectation
+    q_all = f(obs_flat, act_flat).reshape(batch_size, n_modes)
+    return (q_all * actions_probs).sum(dim=-1)
