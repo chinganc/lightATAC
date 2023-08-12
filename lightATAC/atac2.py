@@ -79,9 +79,6 @@ class ATAC(nn.Module):
         rewards = rewards.flatten()
         terminals = terminals.flatten().float()
 
-        if not torch.is_floating_point(actions) and len(actions.shape)==1:  #  convert to 1-hot
-            actions = F.one_hot(actions, num_classes=self.policy.n_bins**self.policy.act_dim).float()
-
         ##### Update Critic #####
         def compute_bellman_backup(q_pred_next):
             assert rewards.shape == q_pred_next.shape

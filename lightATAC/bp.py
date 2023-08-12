@@ -237,12 +237,10 @@ class BehaviorPretraining(nn.Module):
         if actions.dtype == torch.float32 and new_actions.dtype == torch.float32:
             info_dict["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
         else:
-             # XXX debug
-            from torch.distributions.categorical import Categorical
-            new_actions_discrete = Categorical(logits=policy_outs.logits).sample()
-            new_actions = torch.tensor(d2c(new_actions_discrete.cpu().numpy(), self.policy.act_dim, n=self.policy.n_bins))
-            actions = torch.tensor(d2c(actions.cpu().numpy(), self.policy.act_dim, n=self.policy.n_bins))
-            info_dict["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
+            if hasattr(self.policy, 'd2c'):
+                new_actions = self.policy.d2c(self.policy.act(observations))
+                actions = self.policy.d2c(actions)
+                info_dict["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
 
 
         return policy_loss, info_dict

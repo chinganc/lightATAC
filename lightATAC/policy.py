@@ -115,30 +115,18 @@ class Probabilty:  # TODO inherit from torch.distributions.Distribution?
         return self.rsample().detach()
     def log_prob(self, x):
         return -F.cross_entropy(self.logits, x, reduction='none')
-    # def prob(self):
-    #     return F.softmax(self.logits, dim=-1)
 
 class SoftmaxPolicy(nn.Module):
-    def __init__(self, obs_dim, act_dim, n_bins=None, hidden_dim=256, n_hidden=2, activation=nn.ReLU):
+    " This is a simple MLP policy that treats discrete actions as categorical variables."
+    def __init__(self, obs_dim, act_dim, hidden_dim=256, n_hidden=2, activation=nn.ReLU):
+        # act_dim is the number of categories
         super().__init__()
-        if n_bins is None:
-            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=activation)
-        else:
-            self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim*n_bins], activation=activation)
+        self.net = mlp([obs_dim, *([hidden_dim] * n_hidden), act_dim], activation=activation)
         self.act_dim = act_dim
-        self.n_bins = n_bins
+
     def forward(self, obs):
         out = self.net(obs)
-        if self.n_bins is not None:
-            # out: batch x act_dim*n_bins
-            # compute outer sum and reshape it to batch x n_bins ** act_dim
-            batch_size = out.shape[0]
-            out = out.reshape((-1, self.act_dim, self.n_bins))
-            new_out = out[:,0]
-            for i in range(1,self.act_dim):
-                new_out = new_out.unsqueeze(-1) + out[:,i].unsqueeze(1)
-                new_out = new_out.reshape([batch_size, -1])
-            out = new_out
         return Probabilty(out)
+
     def act(self, obs, deterministic=False, enable_grad=False):
-        return Categorical(logits=self.net(obs)).sample()
+        return Categorical(logits=self(obs).logits).sample()

@@ -47,30 +47,6 @@ def get_env_and_dataset(env_name):
     return env, dataset
 
 
-def c2d(x, min=-1, max=1, n=10):
-    assert len(x.shape)==2  # batch x dim
-    digit = (((x-min)/(max-min))*(n-1)).astype(int)
-    return np.sum(digit * (n**np.arange(digit.shape[-1])), axis=1)
-
-def d2c(x, dim, min=-1, max=1, n=10):
-    # reverse of c2d
-    if len(x.shape)==0:  # add a batch dim
-        x = x[np.newaxis]
-    if len(x.shape)==1:
-        x = x[:,np.newaxis]
-    x = x // np.repeat(n**np.arange(dim)[np.newaxis,...], len(x), axis=0) % n
-    return (x/(n-1))*(max-min)+min
-class DiscreteActionGymWrapper(gym.Wrapper):
-    def __init__(self, env, dim, min=-1, max=1, n=10):
-        super().__init__(env)
-        self._min = min
-        self._max = max
-        self._n = n
-        self._dim = dim
-    def step(self, action):
-        action = d2c(action, dim=self._dim, min=self._min, max=self._max, n=self._n)[0]
-        return super().step(action)
-
 def main(args):
     # ------------------ Initialization ------------------ #
     torch.set_num_threads(1)
@@ -84,7 +60,7 @@ def main(args):
         Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount), Vmax-1.0/(1-args.discount))
 
     # Setup logger
-    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta) + '_bins' + str(args.n_bins))
+    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta) + '_bins' + str(args.n_bins) + '_'+args.note)
     log = Log(log_path, vars(args))
     log(f'Log dir: {log.dir}')
     writer = SummaryWriter(log.dir)
@@ -97,25 +73,23 @@ def main(args):
                             use_tanh=True, std_type='diagonal').to(DEFAULT_DEVICE)
     dataset['actions'] = np.clip(dataset['actions'], -1+EPS, 1-EPS)  # due to tanh
 
-    if args.n_bins>0:  # Discrete action space
+    disretize_action = args.n_bins>0
+    if disretize_action:  # Discretize action space
+        from lightATAC.discrete_utils import c2d, DiscreteActionGymWrapper, torchd2c, C2DSoftmaxPolicy, D2CTwinQWrapper
         n_bins = args.n_bins
-        aa0 = dataset['actions']
-        dataset['actions'] = c2d(dataset['actions'], min=-1, max=1, n=n_bins)
-        env = DiscreteActionGymWrapper(env, min=-1, max=1, n=n_bins, dim=act_dim)
-        qf = TwinQDiscrete(obs_dim,  n_bins ** act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+        # acitons_0 = dataset['actions']
+        dataset['actions'] = c2d(dataset['actions'], min=-1, max=1, n_bins=n_bins)
+        # acitons_hat = torchd2c(torch.tensor(dataset['actions']), dim=act_dim, min=-1, max=1, n_bins=n_bins).numpy()  # sanity check
+        # qf = TwinQDiscrete(obs_dim,  n_bins ** act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+        qf = D2CTwinQWrapper(qf, n_bins=n_bins, action_dim=act_dim)
+        # qf = D2CTwinQ(obs_dim, act_dim, n_bins=n_bins, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
         target_qf = copy.deepcopy(qf).requires_grad_(False)
-        # policy = SoftmaxPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
-        policy = SoftmaxPolicy(obs_dim, act_dim, n_bins=n_bins, hidden_dim=1024, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
-
-
-    # if args.n_bins>0:  # Discrete action space
-    #     n_bins = args.n_bins
-    #     aa0 = dataset['actions']
-    #     dataset['actions'] = c2d(dataset['actions'], min=-1, max=1, n=n_bins)
-    #     env = DiscreteActionGymWrapper(env, min=-1, max=1, n=n_bins)
-    #     qf = TwinQDiscrete(obs_dim, n_bins**act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
-    #     target_qf = copy.deepcopy(qf).requires_grad_(False)
-    #     policy = SoftmaxPolicy(obs_dim, act_dim*n_bins,  hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+        if args.use_c2dsoftmax:
+            policy = C2DSoftmaxPolicy(obs_dim, act_dim, n_bins=n_bins, hidden_dim=1024, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+        else:
+            policy = SoftmaxPolicy(obs_dim, n_bins ** act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+        policy.d2c = lambda x: torchd2c(x, act_dim, n_bins=n_bins)
+        env = DiscreteActionGymWrapper(env, d2c= lambda x: policy.d2c(torch.tensor(x))[0].cpu().numpy())
 
     rl = ATAC(
         policy=policy,
@@ -143,7 +117,17 @@ def main(args):
 
     # Main Training
     for step in trange(args.n_steps, disable=args.disable_tqdm):
-        train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
+        if disretize_action:  #  convert to 1-hot
+            batch = sample_batch(dataset, args.batch_size)
+            import torch.nn.functional as F
+            batch['raw_actions'] = batch['actions']
+            batch['actions'] = F.one_hot(batch['actions'], num_classes=n_bins**act_dim).float()
+            train_metrics = rl.update(**batch)
+            new_actions = rl.policy.d2c(rl.policy.act(batch['observations']))
+            actions = rl.policy.d2c(batch['raw_actions'] )
+            train_metrics["Action difference"] = torch.mean(torch.norm((actions - new_actions), dim=1)).item()
+        else:
+            train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
         if step % max(int(args.eval_period/10),1) == 0  or  step==args.n_steps-1:
             print(train_metrics)
             for k, v in train_metrics.items():
@@ -186,6 +170,8 @@ def get_parser():
     parser.add_argument('--clip_v', action='store_true')
     parser.add_argument('--disable_tqdm', action='store_true')
     parser.add_argument('--n_bins', type=int, default=-1)
+    parser.add_argument('--use_c2dsoftmax', action='store_true')
+    parser.add_argument('--note', type=str, default='')
 
 
 
