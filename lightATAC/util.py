@@ -329,6 +329,10 @@ class Log:
             self.csv_file.close()
 
 class MixtureDistribution(Distribution):
+    """
+    A wrapper class for MixtureDistribution which implements
+    reparameterized sampling
+    """
     def __init__(self, dist, use_tanh=False, action_scale=1.):
         self.dist = dist
         self.has_rsample = True
@@ -342,6 +346,11 @@ class MixtureDistribution(Distribution):
         return self.dist.sample(sample_shape=sample_shape)
 
     def rsample(self):
+        """
+        rsample from each component distribution, and append the
+        mixture probability to the end
+        # XXX: does not take in SampleSize at the moment
+        """
         component_rsample = self.dist.component_distribution.rsample()
         if self.use_tanh:
             # Clip samples for tanh distribution to ensure stability
@@ -354,6 +363,10 @@ class MixtureDistribution(Distribution):
         return rsample
 
     def log_prob(self, value):
+        """
+        Compute log probability for either direct samples
+        or reparameterized samples (given by self.rsample())
+        """
         if value.shape[-1] == self.dist.event_shape[0]:
             # Computes log prob for samples from mixture distribution
             return self.dist.log_prob(value)
@@ -371,7 +384,8 @@ class MixtureDistribution(Distribution):
 
     def get_mode(self):
         """
-        Get the mode of a Mixture distribution given by torch.distribution.MixtureSameFamily
+        Find the component distribution with the highest
+        mixture probability, and return the mode of it
         This method is modified from torch.distribution.MixtureSameFamily.sample()
         """
         gather_dim = len(self.dist.batch_shape)
