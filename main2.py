@@ -8,7 +8,7 @@ from lightATAC.policy import GaussianPolicy, GMMPolicy
 from lightATAC.value_functions import TwinQ, ValueFunction
 from lightATAC.util import Log, set_seed
 from lightATAC.bp import BehaviorPretraining
-from lightATAC.atac import ATAC
+from lightATAC.atac2 import ATAC
 from lightATAC.util import evaluate_policy, sample_batch, traj_data_to_qlearning_data, tuple_to_traj_data, DEFAULT_DEVICE
 
 EPS=1e-6
@@ -98,7 +98,6 @@ def main(args):
         target_qf=target_qf,
         optimizer=torch.optim.Adam,
         discount=args.discount,
-        action_shape=act_dim,
         buffer_batch_size=args.batch_size,
         policy_lr=args.slow_lr,
         qf_lr=args.fast_lr,
@@ -110,17 +109,15 @@ def main(args):
 
     # ------------------ Pretraining ------------------ #
     # Train policy and value to fit the behavior data
-    bp = BehaviorPretraining(qf=qf, target_qf=target_qf, policy=policy, lr=args.fast_lr, discount=args.discount,
-                             td_weight=0.5, rs_weight=0.5, fixed_alpha=None, action_shape=act_dim,
-                             Vmin=Vmin, Vmax=Vmax,).to(DEFAULT_DEVICE)
+    bp = BehaviorPretraining(policy=policy, lr=args.fast_lr).to(DEFAULT_DEVICE)
     def bp_log_fun(metrics, step):
         print(step, metrics)
         for k, v in metrics.items():
             writer.add_scalar('BehaviorPretraining/'+k, v, step)
-    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun)  # This ensures "next_observations" is in `dataset`.
+    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
 
     # Main Training
-    for step in trange(args.n_steps):
+    for step in trange(args.n_steps, disable=args.disable_tqdm):
         train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
         if step % max(int(args.eval_period/10),1) == 0  or  step==args.n_steps-1:
             print(train_metrics)
@@ -143,7 +140,7 @@ def main(args):
 
 
 
-if __name__ == '__main__':
+def get_parser():
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument('--env_name', required=True)
@@ -156,11 +153,17 @@ if __name__ == '__main__':
     parser.add_argument('--n_steps', type=int, default=10**6)
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--fast_lr', type=float, default=5e-4)
-    parser.add_argument('--slow_lr', type=float, default=5e-7)
+    parser.add_argument('--slow_lr', type=float, default=5e-5)
+    parser.add_argument('--actor_update_freq', type=int, default=100)
     parser.add_argument('--beta', type=float, default=3.0)
     parser.add_argument('--eval_period', type=int, default=5000)
     parser.add_argument('--n_eval_episodes', type=int, default=10)
     parser.add_argument('--n_warmstart_steps', type=int, default=100*10**3)
     parser.add_argument('--clip_v', action='store_true')
+    parser.add_argument('--disable_tqdm', action='store_true')
     parser.add_argument('--action_scale', type=float, default=1.0)
+    return parser
+
+if __name__ == '__main__':
+    parser = get_parser()
     main(parser.parse_args())

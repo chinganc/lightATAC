@@ -5,7 +5,7 @@ import torch.nn as nn
 from tqdm import trange
 from copy import deepcopy
 from lightATAC.util import compute_batched, discount_cumsum, sample_batch, \
-        traj_data_to_qlearning_data, tuple_to_traj_data, update_exponential_moving_average, normalized_sum, asymmetric_l2_loss
+        traj_data_to_qlearning_data, tuple_to_traj_data, update_exponential_moving_average, normalized_sum, asymmetric_l2_loss, expected_value
 
 class BehaviorPretraining(nn.Module):
     """
@@ -220,8 +220,15 @@ class BehaviorPretraining(nn.Module):
         else:
             raise NotImplementedError
 
+        if actions.shape == new_actions.shape:
+            action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
+        else:
+            # GMM policy with nonzero alpha: rsample() returns samples that has different shape than action
+            action_diff = expected_value(lambda a, na: torch.norm(a - na, dim=1),
+                                         actions,
+                                         new_actions).mean().item()
         info_dict = {"Policy loss": policy_loss.item(),
-                     "Action difference": torch.mean(torch.norm(actions - new_actions, dim=1)).item(),
+                     "Action difference": action_diff,
                      'alpha': self._log_alpha.exp().detach().item()}
         return policy_loss, info_dict
 

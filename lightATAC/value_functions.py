@@ -12,11 +12,16 @@ class TwinQ(nn.Module):
         self.q2 = mlp(dims, squeeze_output=True)
         self.ignore_actions = ignore_actions
 
-    def both(self, state, action):
+    def both(self, state, action, index=None):
         if self.ignore_actions:
             action = action * 0
         sa = torch.cat([state, action], 1)
-        return self.q1(sa), self.q2(sa)
+        if index==0: # q1
+            return self.q1(sa)
+        elif index==1: # q2
+            return self.q2(sa)
+        else:
+            return self.q1(sa), self.q2(sa)
 
     def forward(self, state, action):
         return torch.min(*self.both(state, action))
