@@ -223,7 +223,7 @@ class BehaviorPretraining(nn.Module):
         if actions.shape == new_actions.shape:
             action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
         else:
-            # GMM policy with non-zero alpha
+            # GMM policy with nonzero alpha: rsample() returns samples that has different shape than action
             action_diff = expected_value(lambda a, na: torch.norm(a - na, dim=1),
                                          actions,
                                          new_actions).mean().item()
