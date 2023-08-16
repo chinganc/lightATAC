@@ -382,33 +382,14 @@ class MixtureDistribution(Distribution):
             component_log_prob = self.dist.log_prob(component_value).transpose(0, 1) # transpose back
             return (component_log_prob * mixture_prob).sum(dim=-1)
 
-    def get_mode(self):
-        """
-        Find the component distribution with the highest
-        mixture probability, and return the mode of it
-        This method is modified from torch.distribution.MixtureSameFamily.sample()
-        """
-        gather_dim = len(self.dist.batch_shape)
-        es = self.dist.event_shape
-        # mixture samples [n, B]
-        mix_mode = self.dist.mixture_distribution.mode
-        mix_shape = mix_mode.shape
-        # component samples [n, B, k, E]
-        comp_mode = self.dist.component_distribution.mode
-        # Gather along the k dimension
-        mix_mode_r = mix_mode.reshape(
-            mix_shape + torch.Size([1] * (len(es) + 1)))
-        mix_mode_r = mix_mode_r.repeat(
-            torch.Size([1] * len(mix_shape)) + torch.Size([1]) + es)
-        modes = torch.gather(comp_mode, gather_dim, mix_mode_r)
-        return modes.squeeze(gather_dim)
-
-    @property
-    def mode(self):
-        return self.get_mode()
-
     def __getattr__(self, name):
         return getattr(self.dist, name)
+
+    def __repr__(self):
+        args_string = '\n  {},\n  {}'.format(self.dist.mixture_distribution,
+                                             self.dist.component_distribution)
+        return 'MixtureDistribution' + '(' + args_string + ')'
+
 
 def expected_value(f, observations, gmm_rsample_actions):
     """

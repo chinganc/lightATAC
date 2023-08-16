@@ -194,15 +194,5 @@ class GMMPolicy(nn.Module):
         return MixtureDistribution(dist, use_tanh=self.use_tanh, action_scale=self.action_scale)
 
     def act(self, obs, deterministic=False, enable_grad=False):
-        assert not enable_grad
-        with torch.set_grad_enabled(enable_grad):
-            if not deterministic:
-                act = self(obs).sample()
-            else:
-                dist = self(obs, ignore_transform=True)  # just Gaussian
-                act = dist.mode
-                if self.use_tanh:
-                    act = torch.tanh(act)
-                if hasattr(self, 'action_scale'):
-                    act *= self.action_scale
-            return act
+        assert (not enable_grad) and (not deterministic)
+        return self(obs).sample()
