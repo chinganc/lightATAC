@@ -64,6 +64,20 @@ def main(args):
     env, dataset = get_env_and_dataset(args.env_name)
     set_seed(args.seed, env=env)
 
+    # Scale and shift rewards
+    dataset['rewards'] = (dataset['rewards'] + args.reward_bias) * args.reward_scale
+    # XXX TODO Reward normalization.
+    # To make sure the r_min is bounded away from zero, so that a randomly
+    # initialized Q function is pessimistic.
+    r_min = dataset['rewards'].min()
+    if args.normalize_reward and  r_min <1.0:
+        terminal_ind = dataset['terminals']>0
+        shift = 1.0-r_min  # shift r_min to be 1.0
+        dataset['rewards'][~terminal_ind] += shift
+        dataset['rewards'][terminal_ind] += shift/(1-args.discount)
+    print(f"r_min: {dataset['rewards'].min()}, r_max: {dataset['rewards'].max()}")
+     # end of XXX
+
     # Set range of value functions
     Vmax, Vmin = float('inf'), -float('inf')
     if args.clip_v:
@@ -71,14 +85,14 @@ def main(args):
         Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount), Vmax-1.0/(1-args.discount))
 
     # Setup logger
-    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta) + '_n_modes' + str(args.n_modes))
+    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta) + '_n_modes' + str(args.n_modes) + '_' + args.note)
     log = Log(log_path, vars(args))
     log(f'Log dir: {log.dir}')
     writer = SummaryWriter(log.dir)
 
     # Assume vector observation and action
     obs_dim, act_dim = dataset['observations'].shape[1], dataset['actions'].shape[1]
-    qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
+    qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden, aggregation=args.aggregation).to(DEFAULT_DEVICE)
     target_qf = copy.deepcopy(qf).requires_grad_(False)
     if args.n_modes == 0:
         policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden,
@@ -99,6 +113,7 @@ def main(args):
         optimizer=torch.optim.Adam,
         discount=args.discount,
         buffer_batch_size=args.batch_size,
+        actor_update_freq=args.actor_update_freq,
         policy_lr=args.slow_lr,
         qf_lr=args.fast_lr,
         # ATAC main parameters
@@ -114,11 +129,52 @@ def main(args):
         print(step, metrics)
         for k, v in metrics.items():
             writer.add_scalar('BehaviorPretraining/'+k, v, step)
-    dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
+
+    # XXX
+    if args.load_pretrained:
+        ## Cache pretrained model
+        import os
+        if not os.path.exists('pretrained_model'): # TODO: rename
+            os.makedirs('pretrained_model')
+        filename = 'pretrained_model/'+args.env_name+'_'+str(args.n_modes)+'_'+str(args.n_hidden)+'_pretrained_model.pt'
+        if os.path.exists(filename):
+            print('Load pretrained model from disk.')
+            bp.load_state_dict(torch.load(filename))
+            args.n_warmstart_steps = 0
+            dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
+        else:
+            dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
+            torch.save(bp.state_dict(),filename)
+        ##
+    else:
+        dataset = bp.train(dataset, args.n_warmstart_steps, log_fun=bp_log_fun, silence=args.disable_tqdm)  # This ensures "next_observations" is in `dataset`.
+    # end of XXX
 
     # Main Training
+
+    # XXX Extract trajectories with done
+    traj_data = tuple_to_traj_data(dataset)
+    traj_data_w_done = [ t for t in traj_data if t['terminals'].sum()>0 ]
+    dataset_w_done = traj_data_to_qlearning_data(traj_data_w_done)
+    print('Number of trajectories:', len(traj_data), 'Number of transitions', len(dataset['observations']))
+    print('Number of trajectories with done:', len(traj_data_w_done), 'Number of transitions with done:', len(dataset_w_done['observations']))
+     # end of XXX
+
     for step in trange(args.n_steps, disable=args.disable_tqdm):
-        train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
+        # TODO clean this up
+        # XXX
+        batch = sample_batch(dataset, args.batch_size)
+        batch['log'] = torch.zeros_like(batch['rewards'], dtype=torch.bool, device=DEFAULT_DEVICE)
+        batch_done = sample_batch(dataset_w_done, args.done_batch_size)
+        batch_done['log'] = torch.ones_like(batch_done['rewards'], dtype=torch.bool, device=DEFAULT_DEVICE)
+        full_batch = {k: torch.cat([batch[k], batch_done[k]], dim=0) for k in batch.keys()}
+         # end of XXX
+
+        # Update
+        train_metrics = rl.update(**full_batch)
+
+        # train_metrics = rl.update(**sample_batch(dataset, args.batch_size))
+
         if step % max(int(args.eval_period/10),1) == 0  or  step==args.n_steps-1:
             print(train_metrics)
             for k, v in train_metrics.items():
@@ -128,7 +184,8 @@ def main(args):
                                       agent=policy,
                                       discount=args.discount,
                                       n_eval_episodes=args.n_eval_episodes,
-                                      normalize_score=lambda returns: d4rl.get_normalized_score(args.env_name, returns)*100.0)
+                                      normalize_score=lambda returns: d4rl.get_normalized_score(args.env_name, returns)*100.0,
+                                      deterministic_eval=args.deterministic_eval)
             log.row(eval_metrics)
             for k, v in eval_metrics.items():
                 writer.add_scalar('Eval/'+k, v, step)
@@ -162,6 +219,15 @@ def get_parser():
     parser.add_argument('--clip_v', action='store_true')
     parser.add_argument('--disable_tqdm', action='store_true')
     parser.add_argument('--action_scale', type=float, default=1.0)
+    parser.add_argument('--note', type=str, default='')
+    parser.add_argument('--reward_scale', type=float, default=1.0)
+    parser.add_argument('--reward_bias', type=float, default=0.0)
+    parser.add_argument('--normalize_reward', action='store_true')
+    parser.add_argument('--done_batch_size', type=int, default=256)
+    parser.add_argument('--deterministic_eval', action='store_true')
+    parser.add_argument('--load_pretrained', action='store_true')
+    parser.add_argument('--aggregation', type=str, default='min')
+
     return parser
 
 if __name__ == '__main__':

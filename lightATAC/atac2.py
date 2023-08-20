@@ -156,11 +156,33 @@ class ATAC(nn.Module):
                 debug_log_info = dict(
                         bellman_surrogate=residual_error.item(),
                         qf1_pred_mean=q1_pred.mean().item(),
+                        qf1_pred_std=q1_pred.std().item(),
                         qf2_pred_mean = q2_pred.mean().item(),
+                        qf2_pred_std = q2_pred.std().item(),
                         q_target_mean = q_target.mean().item(),
+                        q_target_std = q_target.std().item(),
                         target_q_values_mean = target_q_values.mean().item(),
+                        target_q_values_std = target_q_values.std().item(),
                         q2_pess_actions_mean = q2_pess_actions.mean().item(),
-                        action_diff = action_diff
+                        q2_pess_actions_std = q2_pess_actions.std().item(),
+                        action_diff = action_diff,
+                        #
+                        done_error = F.mse_loss(q2_pred[terminals.bool()], q2_backup[terminals.bool()]).mean().item(),
+                        done_q2_mean = q2_pred[terminals.bool()].mean().item(),
+                        done_q2_std = q2_pred[terminals.bool()].std().item(),
+                        notdone_q2_mean = q2_pred[~ terminals.bool()].mean().item(),
+                        notdone_q2_std = q2_pred[~ terminals.bool()].std().item(),
+                        #
+                        log_q2_mean = q2_pred[kwargs['log'].bool()].mean().item(),
+                        log_q2_std = q2_pred[kwargs['log'].bool()].std().item(),
+                        log_bellman_error = F.mse_loss(q2_pred[kwargs['log'].bool()], q2_backup[kwargs['log'].bool()]).mean().item(),
+                        log_q2_pess_actions_mean = q2_pess_actions[kwargs['log'].bool()].mean().item(),
+                        log_q2_pess_actions_std = q2_pess_actions[kwargs['log'].bool()].std().item(),
+                        notlog_q2_mean = q2_pred[~kwargs['log'].bool()].mean().item(),
+                        notlog_q2_std = q2_pred[~kwargs['log'].bool()].std().item(),
+                        notlog_bellman_error = F.mse_loss(q2_pred[~kwargs['log'].bool()], q2_backup[~kwargs['log'].bool()]).mean().item(),
+                        notlog_q2_pess_actions_mean = q2_pess_actions[~kwargs['log'].bool()].mean().item(),
+                        notlog_q2_pess_actions_std = q2_pess_actions[~kwargs['log'].bool()].std().item(),
                         )
             log_info.update(debug_log_info)
 

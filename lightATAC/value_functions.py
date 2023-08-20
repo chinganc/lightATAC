@@ -5,12 +5,14 @@ from .util import mlp
 # Below are modified from gwthomas/IQL-PyTorch
 
 class TwinQ(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256, n_hidden=2, ignore_actions=False):
+    def __init__(self, state_dim, action_dim, hidden_dim=256, n_hidden=2, \
+                 ignore_actions=False, aggregation='min'):
         super().__init__()
         dims = [state_dim + action_dim, *([hidden_dim] * n_hidden), 1]
         self.q1 = mlp(dims, squeeze_output=True)
         self.q2 = mlp(dims, squeeze_output=True)
         self.ignore_actions = ignore_actions
+        self.aggregation = aggregation
 
     def both(self, state, action, index=None):
         if self.ignore_actions:
@@ -24,7 +26,13 @@ class TwinQ(nn.Module):
             return self.q1(sa), self.q2(sa)
 
     def forward(self, state, action):
-        return torch.min(*self.both(state, action))
+        if self.aggregation=='min':
+            return torch.min(*self.both(state, action))
+        elif self.aggregation=='mean':
+            q1, q2 = self.both(state, action)
+            return (q1 + q2) / 2
+        else:
+            raise NotImplementedError
 
 
 class ValueFunction(nn.Module):
