@@ -183,6 +183,7 @@ def main(args):
             eval_metrics = eval_agent(env=env,
                                       agent=policy,
                                       discount=args.discount,
+                                      deterministic_eval=(args.n_modes == 0), # should not use determinsitic eval for gmm policies
                                       n_eval_episodes=args.n_eval_episodes,
                                       normalize_score=lambda returns: d4rl.get_normalized_score(args.env_name, returns)*100.0,
                                       deterministic_eval=args.deterministic_eval)

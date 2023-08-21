@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.distributions import MultivariateNormal, TransformedDistribution, Normal, Categorical, MixtureSameFamily, Independent
 from torch.distributions.transforms import TanhTransform, AffineTransform
 import numpy as np
-from .util import mlp
+from .util import mlp, MixtureDistribution
 
 
 LOG_STD_MIN = -5.0
@@ -103,26 +103,6 @@ class DeterministicPolicy(nn.Module):
             return self(obs)
 
 
-def get_mode(dist):
-    """
-    Get the mode of a Mixture distribution given by torch.distribution.MixtureSameFamily
-    This method is modified from torch.distribution.MixtureSameFamily.sample()
-    """
-    gather_dim = len(dist.batch_shape)
-    es = dist.event_shape
-    # mixture samples [n, B]
-    mix_mode = dist.mixture_distribution.mode
-    mix_shape = mix_mode.shape
-    # component samples [n, B, k, E]
-    comp_mode = dist.component_distribution.mode
-    # Gather along the k dimension
-    mix_mode_r = mix_mode.reshape(
-        mix_shape + torch.Size([1] * (len(es) + 1)))
-    mix_mode_r = mix_mode_r.repeat(
-        torch.Size([1] * len(mix_shape)) + torch.Size([1]) + es)
-    modes = torch.gather(comp_mode, gather_dim, mix_mode_r)
-    return modes.squeeze(gather_dim)
-
 
 class GMMPolicy(nn.Module):
     def __init__(self, obs_dim, act_dim, n_modes=5, hidden_dim=256, n_hidden=2,
@@ -211,18 +191,8 @@ class GMMPolicy(nn.Module):
                                                                      cache_size=1))
         dist = MixtureSameFamily(mixture_distribution=mixture_dist,
                                  component_distribution=component_dist)
-        return dist
+        return MixtureDistribution(dist, use_tanh=self.use_tanh, action_scale=self.action_scale)
 
     def act(self, obs, deterministic=False, enable_grad=False):
-        assert not enable_grad
-        with torch.set_grad_enabled(enable_grad):
-            if not deterministic:
-                act = self(obs).sample()
-            else:
-                dist = self(obs, ignore_transform=True)  # just Gaussian
-                act = get_mode(dist)
-                if self.use_tanh:
-                    act = torch.tanh(act)
-                if hasattr(self, 'action_scale'):
-                    act *= self.action_scale
-            return act
+        assert (not enable_grad) and (not deterministic)
+        return self(obs).sample()
