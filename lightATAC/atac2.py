@@ -86,8 +86,11 @@ class ATAC(nn.Module):
 
         ## Pre-computation
         with torch.no_grad():  # regression target
-            new_next_actions = self.policy(next_observations).sample()
-            target_q_values = self._target_qf(next_observations, new_next_actions)  # projection
+            new_next_actions = safe_rsample(self.policy(next_observations))
+            if new_next_actions.shape == actions.shape:
+                target_q_values = self._target_qf(next_observations, new_next_actions)
+            else: # GMM
+                target_q_values = expected_value(self._target_qf, next_observations, new_next_actions)
             q_target = compute_bellman_backup(target_q_values.flatten())
 
         # These samples will be used for the actor update too, so they need to be traced.
@@ -116,12 +119,13 @@ class ATAC(nn.Module):
                 = compute_batched(q2, [observations, next_observations, pess_observations],
                                       [actions,      new_next_actions,  pess_new_actions])
         else:
-            # GMM policy with ATAC
-            q2_pred, q2_pred_next \
-                = compute_batched(q2, [observations, next_observations],
-                                      [actions,      new_next_actions])
+            # # GMM policy with ATAC
+            q2_pred = q2(observations, actions)
             # Separately compute Q value for GMM outputs
-            q2_pess_actions = expected_value(q2, pess_observations, pess_new_actions)
+            expected_q2 = lambda obs, act: expected_value(q2, obs, act)
+            q2_pess_actions, q2_pred_next \
+                = compute_batched(expected_q2, [pess_observations, next_observations],
+                                               [pess_new_actions,  new_next_actions])
         # Compute pessimism term
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_loss = (q2_pess_actions - q2_pred).mean()
