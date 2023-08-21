@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify
+from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify, expected_value
 
 
 def l2_projection(constraint):
@@ -145,12 +145,19 @@ class ATAC(nn.Module):
             idx_ = np.random.choice(len(self._init_observations), min(self._buffer_batch_size, len(rewards)))
             init_observations = torchify(self._init_observations[idx_])
             init_actions_dist = self.policy(init_observations)
-            pess_new_actions = init_actions_dist.rsample().detach()
+            pess_new_actions = init_actions_dist.sample()
             pess_observations = init_observations
 
-        qf_pred_both, qf_pred_next_both, qf_new_actions_both \
-            = compute_batched(self._qf.both, [observations, next_observations, pess_observations],
-                                             [actions,      new_next_actions,  pess_new_actions])
+        if pess_new_actions.shape == actions.shape:
+            qf_pred_both, qf_pred_next_both, qf_new_actions_both \
+                = compute_batched(self._qf.both, [observations, next_observations, pess_observations],
+                                                 [actions,      new_next_actions,  pess_new_actions])
+        else:
+            # GMM policy: rsample() returns samples that has different shape than action
+            qf_pred_both, qf_pred_next_both \
+                = compute_batched(self._qf.both, [observations, next_observations],
+                                                 [actions,      new_next_actions])
+            qf_new_actions_both = expected_value(self._qf.both, pess_observations, pess_new_actions)
 
         qf_loss = 0
         w1, w2 = self._w1, self._w2
@@ -195,7 +202,13 @@ class ATAC(nn.Module):
         # Compute performance difference lower bound (policy_loss = - lower_bound - alpha * policy_kl)
         alpha = self._log_alpha.exp().detach()
         self._qf.requires_grad_(False)
-        lower_bound = self._qf.both(observations, new_actions)[-1].mean() # just use one network
+        if new_actions.shape == actions.shape:
+            lower_bound = self._qf.both(observations, new_actions)[-1].mean() # just use one network
+        else:
+            # GMM policy: rsample() returns samples that has different shape than action
+            lower_bound = expected_value(self._qf.both,
+                                         observations,
+                                         new_actions)[-1].mean() # just use one network
         self._qf.requires_grad_(True)
         policy_loss = normalized_sum(-lower_bound, -policy_entropy, alpha)
 
@@ -219,6 +232,13 @@ class ATAC(nn.Module):
         # For logging
         if self._debug:
             with torch.no_grad():
+                if actions.shape == new_actions.shape:
+                    action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
+                else:
+                    # GMM policy: rsample() returns samples that has different shape than action
+                    action_diff = expected_value(lambda a, na: torch.norm(a - na, dim=1),
+                                                 actions,
+                                                 new_actions).mean().item()
                 debug_log_info = dict(
                         bellman_surrogate=residual_error.item(),
                         qf1_pred_mean=qf_pred_both[0].mean().item(),
@@ -227,7 +247,7 @@ class ATAC(nn.Module):
                         target_q_values_mean = target_q_values.mean().item(),
                         qf1_new_actions_mean = qf_new_actions_both[0].mean().item(),
                         qf2_new_actions_mean = qf_new_actions_both[1].mean().item(),
-                        action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
+                        action_diff = action_diff
                         )
             log_info.update(debug_log_info)
         return log_info

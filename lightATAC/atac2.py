@@ -4,11 +4,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify, safe_rsample, expected_value
+from lightATAC.util import compute_batched, DEFAULT_DEVICE, update_exponential_moving_average, normalized_sum, torchify, expected_value
+from lightATAC.util import clamp_w_grad as clamp
 from functools import partial
 
-def clamp(x, Vmin, Vmax): # clamp with gradient flow
-    return x + (Vmax-x).clamp(max=0).detach() - (x-Vmin).clamp(max=0).detach()
 
 class ATAC(nn.Module):
     """ Adversarilly Trained Actor Critic """
@@ -86,7 +85,7 @@ class ATAC(nn.Module):
 
         ## Pre-computation
         with torch.no_grad():  # regression target
-            new_next_actions = safe_rsample(self.policy(next_observations))
+            new_next_actions = self.policy(next_observations).rsample()
             if new_next_actions.shape == actions.shape:
                 target_q_values = self._target_qf(next_observations, new_next_actions)
             else: # GMM
@@ -94,7 +93,7 @@ class ATAC(nn.Module):
             q_target = compute_bellman_backup(target_q_values.flatten())
 
         # These samples will be used for the actor update too, so they need to be traced.
-        new_actions = safe_rsample(self.policy(observations))
+        new_actions = self.policy(observations).rsample()
 
         if self._init_observations is None:  #  relative pessimism (ATAC)
             pess_new_actions = new_actions.detach()
@@ -119,7 +118,7 @@ class ATAC(nn.Module):
                 = compute_batched(q2, [observations, next_observations, pess_observations],
                                       [actions,      new_next_actions,  pess_new_actions])
         else:
-            # # GMM policy with ATAC
+            # GMM policy: rsample() returns samples that has different shape than action
             q2_pred = q2(observations, actions)
             # Separately compute Q value for GMM outputs
             expected_q2 = lambda obs, act: expected_value(q2, obs, act)
@@ -153,7 +152,7 @@ class ATAC(nn.Module):
                 if actions.shape == new_actions.shape:
                     action_diff = torch.mean(torch.norm(actions - new_actions, dim=1)).item()
                 else:
-                    # GMM policy
+                    # GMM policy: rsample() returns samples that has different shape than action
                     action_diff = expected_value(lambda a, na: torch.norm(a - na, dim=1),
                                                  actions,
                                                  new_actions).mean().item()
@@ -200,7 +199,7 @@ class ATAC(nn.Module):
         if new_actions.shape == actions.shape:
             lower_bound = q2(observations, new_actions).mean() # just use one network
         else:
-            # GMM policy
+            # GMM policy: rsample() returns samples that has different shape than action
             lower_bound = expected_value(q2, observations, new_actions).mean()
         self._qf.requires_grad_(True)
         policy_loss = - lower_bound

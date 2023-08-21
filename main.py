@@ -4,7 +4,7 @@ import numpy as np
 import torch, copy
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import trange
-from lightATAC.policy import GaussianPolicy
+from lightATAC.policy import GaussianPolicy, GMMPolicy
 from lightATAC.value_functions import TwinQ, ValueFunction
 from lightATAC.util import Log, set_seed
 from lightATAC.bp import BehaviorPretraining
@@ -71,7 +71,7 @@ def main(args):
         Vmin = min(0.0, dataset['rewards'].min()/(1-args.discount), Vmax-1.0/(1-args.discount))
 
     # Setup logger
-    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta))
+    log_path = Path(args.log_dir) / args.env_name / ('_beta' + str(args.beta) + '_n_modes' + str(args.n_modes))
     log = Log(log_path, vars(args))
     log(f'Log dir: {log.dir}')
     writer = SummaryWriter(log.dir)
@@ -80,8 +80,17 @@ def main(args):
     obs_dim, act_dim = dataset['observations'].shape[1], dataset['actions'].shape[1]
     qf = TwinQ(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden).to(DEFAULT_DEVICE)
     target_qf = copy.deepcopy(qf).requires_grad_(False)
-    policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden,
-                            use_tanh=True, std_type='diagonal').to(DEFAULT_DEVICE)
+    if args.n_modes == 0:
+        policy = GaussianPolicy(obs_dim, act_dim, hidden_dim=args.hidden_dim, n_hidden=args.n_hidden,
+                                use_tanh=True, std_type='diagonal').to(DEFAULT_DEVICE)
+    else:
+        policy = GMMPolicy(obs_dim, act_dim,
+                           n_modes=args.n_modes,
+                           hidden_dim=args.hidden_dim,
+                           n_hidden=args.n_hidden,
+                           use_tanh=True,
+                           action_scale=args.action_scale,
+                           std_type='diagonal').to(DEFAULT_DEVICE)
     dataset['actions'] = np.clip(dataset['actions'], -1+EPS, 1-EPS)  # due to tanh
     rl = ATAC(
         policy=policy,
@@ -121,6 +130,7 @@ def main(args):
             eval_metrics = eval_agent(env=env,
                                       agent=policy,
                                       discount=args.discount,
+                                      deterministic_eval=args.deterministic_eval, # should not use determinsitic eval for gmm policies
                                       n_eval_episodes=args.n_eval_episodes,
                                       normalize_score=lambda returns: d4rl.get_normalized_score(args.env_name, returns)*100.0)
             log.row(eval_metrics)
@@ -143,6 +153,7 @@ if __name__ == '__main__':
     parser.add_argument('--discount', type=float, default=0.99)
     parser.add_argument('--hidden_dim', type=int, default=256)
     parser.add_argument('--n_hidden', type=int, default=3)
+    parser.add_argument('--n_modes', type=int, default=0)
     parser.add_argument('--n_steps', type=int, default=10**6)
     parser.add_argument('--batch_size', type=int, default=256)
     parser.add_argument('--fast_lr', type=float, default=5e-4)
@@ -152,4 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_eval_episodes', type=int, default=10)
     parser.add_argument('--n_warmstart_steps', type=int, default=100*10**3)
     parser.add_argument('--clip_v', action='store_true')
+    parser.add_argument('--action_scale', type=float, default=1.0)
+    parser.add_argument('--deterministic_eval', action='store_true')
+
     main(parser.parse_args())

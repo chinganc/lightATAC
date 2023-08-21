@@ -6,10 +6,14 @@ import torch
 import torch.nn as nn
 import torchaudio
 from scipy import signal
-from torch.distributions import MixtureSameFamily
+from torch.distributions import Distribution
 
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+EPS = 1e-6
+
+def clamp_w_grad(x, min_x, max_x): # clamp with gradient flow
+    return x + (max_x-x).clamp(max=0).detach() - (x-min_x).clamp(max=0).detach()
 
 # Methods for processing trajectories
 
@@ -327,24 +331,68 @@ class Log:
         if self.csv_file is not None:
             self.csv_file.close()
 
+class MixtureDistribution(Distribution):
+    """
+    A wrapper class for MixtureDistribution which implements
+    reparameterized sampling
+    """
+    def __init__(self, dist, use_tanh=False, action_scale=1.):
+        self.dist = dist
+        self.has_rsample = True
+        self.use_tanh = use_tanh
+        self.action_scale = action_scale
 
-def safe_rsample(dist):
-    """
-    Reparameterized sampling for distributions with rsample() implemented
-    as well as MixtureSameFamily.
-    In the case of MixtureSameFamily, returns a tensor of shape [..., n_modes, action_dim + 1],
-    where rsample[..., :-1] is the reparameterized sample from the component distributions,
-    and rsample[..., -1] is the probability from mixture distribution (usually Categorical)
-    """
-    if dist.has_rsample:
-        return dist.rsample()
-    else:
-        assert isinstance(dist, MixtureSameFamily)
-        # XXX: assumes action is flat
-        rsample = torch.cat((dist.component_distribution.rsample(),
-                             dist.mixture_distribution.probs.unsqueeze(-1)),
+        # XXX: assumes samples from dist is flat
+        assert len(self.dist.event_shape) == 1
+
+    def sample(self, sample_shape: torch.Size = torch.Size()):
+        return self.dist.sample(sample_shape=sample_shape)
+
+    def rsample(self):
+        """
+        rsample from each component distribution, and append the
+        mixture probability to the end
+        # XXX: does not take in SampleSize at the moment
+        """
+        component_rsample = self.dist.component_distribution.rsample()
+        if self.use_tanh:
+            # Clip samples for tanh distribution to ensure stability
+            component_rsample = torch.clamp(component_rsample,
+                                            min=-self.action_scale+EPS,
+                                            max=self.action_scale-EPS)
+        rsample = torch.cat((component_rsample,
+                             self.dist.mixture_distribution.probs.unsqueeze(-1)),
                              dim=-1)
         return rsample
+
+    def log_prob(self, value):
+        """
+        Compute log probability for either direct samples
+        or reparameterized samples (given by self.rsample())
+        """
+        if value.shape[-1] == self.dist.event_shape[0]:
+            # Computes log prob for samples from mixture distribution
+            return self.dist.log_prob(value)
+        else:
+            # Computes log prob for samples for each component distribution along with mixture distribution
+            # This is used when computing log prob for rsamples
+            # log_prob = \sum_i w_i \sum_{x_i~P_i} log_prob(x_i)
+
+            # Split component values and mixture probs
+            component_value = value[..., :-1].transpose(0, 1) # need shape broadcastable with self.dist
+
+            mixture_prob = value[..., -1]
+            component_log_prob = self.dist.log_prob(component_value).transpose(0, 1) # transpose back
+            return (component_log_prob * mixture_prob).sum(dim=-1)
+
+    def __getattr__(self, name):
+        return getattr(self.dist, name)
+
+    def __repr__(self):
+        args_string = '\n  {},\n  {}'.format(self.dist.mixture_distribution,
+                                             self.dist.component_distribution)
+        return 'MixtureDistribution' + '(' + args_string + ')'
+
 
 def expected_value(f, observations, gmm_rsample_actions):
     """
@@ -366,5 +414,11 @@ def expected_value(f, observations, gmm_rsample_actions):
     obs_flat = observations.view(batch_size * n_modes, obs_dim)
     act_flat = actions_all.view(batch_size * n_modes, act_dim_plus_1 - 1)
     # Evaluate all actions and take expectation
-    q_all = f(obs_flat, act_flat).reshape(batch_size, n_modes)
-    return (q_all * actions_probs).sum(dim=-1)
+    f_all = f(obs_flat, act_flat)
+    if isinstance(f_all, torch.Tensor):
+        expected_f = (f_all.reshape(batch_size, n_modes) * actions_probs).sum(dim=-1)
+    elif isinstance(f_all, tuple):
+        expected_f = tuple((ff.reshape(batch_size, n_modes) * actions_probs).sum(dim=-1) for ff in f_all)
+    else:
+        raise NotImplementedError
+    return expected_f
