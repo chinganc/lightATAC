@@ -13,7 +13,7 @@ setup(
     install_requires=[
         "gym==0.17.2",
         "torchaudio==0.12.1",
-        "torch==1.12.1",
+        "torch==2.2.0",
         "tensorboard==2.10.0",
         "psutil==5.9.1",
         "protobuf==3.19.4",
